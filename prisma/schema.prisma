@@ -1,0 +1,77 @@
+// RetroLoop — Prisma schema
+// 技術決定は docs/DECISIONS.md (ADR-001) を参照。
+//
+// このファイルには現時点で Auth.js(NextAuth) の Prisma アダプタが必要とする
+// 認証モデルのみを置いている。
+// ドメインモデル（Team / Sprint / Note(KPT) / AiReflection / Action など）は
+// 「データモデルは自分で設計」する人間主導ステップとして次に設計する。TODO を参照。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// Auth.js (NextAuth v5) — Prisma adapter models
+// https://authjs.dev/getting-started/adapters/prisma
+// ─────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// TODO(データモデル設計・人間主導): 以下のドメインモデルを次に設計して追加する。
+//   Team         … チーム（Team > Sprint の浅い階層）
+//   Membership   … User と Team の関連（MVPは最小）
+//   Sprint       … スプリント
+//   Note         … 付箋（KPT: KEEP / PROBLEM / TRY）
+//   AiReflection … AI問い返しの構造化結果（差別化の核）
+//   Action       … 改善アクション（次スプリントへ持ち越し・効果追跡ループ）
