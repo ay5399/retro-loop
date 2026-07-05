@@ -21,8 +21,8 @@ test("マジックリンクでログインできる", async ({ page }) => {
   await loginViaMagicLink(page, TEST_EMAIL);
 
   await page.goto("/");
-  await expect(page.getByText("ログイン中：")).toBeVisible();
   await expect(page.getByText(TEST_EMAIL)).toBeVisible();
   await expect(page.getByRole("button", { name: "ログアウト" })).toBeVisible();
+  await expect(page.getByRole("link", { name: /チームへ進む/ })).toBeVisible();
   await page.screenshot({ path: "e2e/__screens__/home-logged-in.png", fullPage: true });
 });

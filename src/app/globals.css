@@ -1,26 +1,171 @@
 @import "tailwindcss";
 
+/* ── RetroLoop デザイントークン ──────────────────
+   方向性「閉じるループ」: クールな紙色＋インク＋自社色 iris(菫)。
+   KPT/判定色は意味を持つ機能色。定番配色は避ける。 */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --paper: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #fbfcfe;
+  --ink: #191b21;
+  --muted: #666d7e;
+  --line: #e3e7ee;
+  --line-strong: #d2d8e3;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --iris: #5b4be0; /* ブランド／ループの糸(冷) */
+  --iris-ink: #ffffff;
+  --iris-soft: #ece9fd;
+  --ember: #e0913a; /* ループの起点(温) */
+
+  --keep: #2f9e6b;
+  --problem: #e15563;
+  --try: #2ca5a0;
+  --warn: #d9922b; /* 確認中 */
+
+  --radius: 14px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #0d0e13;
+    --surface: #171922;
+    --surface-2: #1c1f2a;
+    --ink: #e9eaef;
+    --muted: #99a0b0;
+    --line: #262b36;
+    --line-strong: #333a48;
+
+    --iris: #8271ff;
+    --iris-ink: #0d0e13;
+    --iris-soft: #211f3a;
+    --ember: #eca154;
+
+    --keep: #40b881;
+    --problem: #f0707c;
+    --try: #3fbdb6;
+    --warn: #e6a545;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-iris: var(--iris);
+  --color-iris-ink: var(--iris-ink);
+  --color-iris-soft: var(--iris-soft);
+  --color-ember: var(--ember);
+  --color-keep: var(--keep);
+  --color-problem: var(--problem);
+  --color-try: var(--try);
+  --color-warn: var(--warn);
+
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* ── 共通コンポーネント ───────────────────────── */
+@layer components {
+  /* セクション見出しの上に置くラベル（構造に意味を与える） */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 10px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1;
+    transition: transform 0.06s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    cursor: pointer;
+  }
+  .btn:active {
+    transform: translateY(1px);
+  }
+  .btn-sm {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    border-radius: 8px;
+  }
+
+  .btn-primary {
+    background: var(--iris);
+    color: var(--iris-ink);
+  }
+  .btn-primary:hover {
+    opacity: 0.92;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line-strong);
+  }
+  .btn-ghost:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+
+  .field {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.875rem;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field::placeholder {
+    color: color-mix(in srgb, var(--muted) 80%, transparent);
+  }
+  .field:focus {
+    border-color: var(--iris);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--iris) 22%, transparent);
+  }
+
+  /* KPT / 判定の意味を表す小さなバッジ */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .badge::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+  }
 }

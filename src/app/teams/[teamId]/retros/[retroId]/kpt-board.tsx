@@ -3,10 +3,15 @@ import { addNote, updateNote, deleteNote } from "./actions";
 
 type Note = { id: string; kind: NoteKind; content: string };
 
-const COLUMNS: { kind: NoteKind; label: string; hint: string }[] = [
-  { kind: "KEEP", label: "Keep", hint: "良かった・続けたいこと" },
-  { kind: "PROBLEM", label: "Problem", hint: "困った・課題" },
-  { kind: "TRY", label: "Try", hint: "次に試すこと" },
+const COLUMNS: {
+  kind: NoteKind;
+  label: string;
+  hint: string;
+  color: string;
+}[] = [
+  { kind: "KEEP", label: "Keep", hint: "良かった・続けたい", color: "text-keep" },
+  { kind: "PROBLEM", label: "Problem", hint: "困った・課題", color: "text-problem" },
+  { kind: "TRY", label: "Try", hint: "次に試す", color: "text-try" },
 ];
 
 export function KptBoard({
@@ -24,25 +29,22 @@ export function KptBoard({
         const items = notes.filter((n) => n.kind === col.kind);
         const add = addNote.bind(null, teamId, retroId, col.kind);
         return (
-          <section
-            key={col.kind}
-            className="flex flex-col gap-3 rounded-md border border-black/10 p-3 dark:border-white/15"
-          >
-            <header>
-              <h3 className="text-sm font-semibold">{col.label}</h3>
-              <p className="text-xs text-black/40 dark:text-white/40">{col.hint}</p>
+          <section key={col.kind} className="card flex flex-col gap-3 p-3">
+            <header className="flex items-baseline justify-between">
+              <span className={`badge ${col.color}`}>{col.label}</span>
+              <span className="text-xs text-muted">{col.hint}</span>
             </header>
 
             <ul className="flex flex-col gap-2">
               {items.map((note) => (
                 <li
                   key={note.id}
-                  className="rounded border border-black/10 bg-black/[.02] p-2 text-sm dark:border-white/10 dark:bg-white/[.03]"
+                  className="rounded-lg border border-line bg-surface-2 p-2.5 text-sm"
                 >
                   <p className="whitespace-pre-wrap break-words">{note.content}</p>
-                  <div className="mt-1 flex items-center gap-3 text-xs">
+                  <div className="mt-2 flex items-center gap-3 text-xs text-muted">
                     <details>
-                      <summary className="cursor-pointer text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white">
+                      <summary className="cursor-pointer hover:text-ink">
                         編集
                       </summary>
                       <form
@@ -54,21 +56,15 @@ export function KptBoard({
                           defaultValue={note.content}
                           required
                           rows={2}
-                          className="w-full rounded border border-black/15 bg-transparent px-2 py-1 text-sm outline-none focus:border-black/40 dark:border-white/20"
+                          className="field"
                         />
-                        <button
-                          type="submit"
-                          className="self-start rounded bg-foreground px-2 py-1 text-xs font-medium text-background hover:opacity-90"
-                        >
+                        <button type="submit" className="btn btn-primary btn-sm self-start">
                           保存
                         </button>
                       </form>
                     </details>
                     <form action={deleteNote.bind(null, teamId, retroId, note.id)}>
-                      <button
-                        type="submit"
-                        className="text-black/50 hover:text-red-600 dark:text-white/50 dark:hover:text-red-400"
-                      >
+                      <button type="submit" className="hover:text-problem">
                         削除
                       </button>
                     </form>
@@ -76,7 +72,7 @@ export function KptBoard({
                 </li>
               ))}
               {items.length === 0 && (
-                <li className="rounded border border-dashed border-black/10 p-2 text-center text-xs text-black/30 dark:border-white/10 dark:text-white/30">
+                <li className="rounded-lg border border-dashed border-line px-2 py-3 text-center text-xs text-muted">
                   まだありません
                 </li>
               )}
@@ -88,12 +84,9 @@ export function KptBoard({
                 required
                 rows={2}
                 placeholder={`${col.label} を追加`}
-                className="w-full rounded border border-black/15 bg-transparent px-2 py-1 text-sm outline-none focus:border-black/40 dark:border-white/20"
+                className="field"
               />
-              <button
-                type="submit"
-                className="self-start rounded border border-black/15 px-2 py-1 text-xs transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-              >
+              <button type="submit" className="btn btn-ghost btn-sm self-start">
                 ＋ 追加
               </button>
             </form>
