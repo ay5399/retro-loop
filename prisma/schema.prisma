@@ -10,7 +10,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // アプリ実行時: Neon のプール接続(-pooler付き)。Vercel サーバレスに向く
   url       = env("DATABASE_URL")
   // マイグレーション時: Neon の直結接続(-pooler無し)。prisma migrate はプール接続だと不安定なため分離
@@ -34,6 +34,7 @@ model User {
   // ドメイン関連
   memberships Membership[]
   notes       Note[] // 書いた付箋
+  noteVotes   NoteVote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -141,6 +142,7 @@ model Retrospective {
 
   team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   notes       Note[]
+  noteGroups  NoteGroup[]
   reflections Reflection[]
 
   createdActions    Action[]           @relation("ActionCreatedIn")
@@ -157,11 +159,50 @@ model Note {
   kind            NoteKind
   content         String
 
+  // インタラクティブボード用の視覚メタデータ（AIには渡さない）
+  order   Int     @default(0) // レーン(retrospectiveId + kind)内の並び
+  color   String? // トークンキー("keep"|"iris"等)。null=種別デフォルト
+  groupId String?
+
   retrospective Retrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade)
   author        User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  group         NoteGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  votes         NoteVote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([retrospectiveId, kind, order])
+}
+
+/// レーン内で付箋をまとめるグループ（同じ問題の集約）。名前・折り畳み・順序を持つ第一級概念。
+model NoteGroup {
+  id              String   @id @default(cuid())
+  retrospectiveId String
+  kind            NoteKind // グループはレーン(kind)内に属する
+  name            String?
+  order           Int      @default(0)
+  color           String?
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade)
+  notes         Note[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// 付箋への投票（1ユーザー1票/枚のトグル）。
+model NoteVote {
+  id     String @id @default(cuid())
+  noteId String
+  userId String
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([noteId, userId])
 }
 
 /// AI問い返しの1回の応答。再実行すると増える（履歴が残る）。
