@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
 import { AppHeader } from "@/components/app-header";
 import { LoopMark } from "@/components/loop";
+import { ReflectionResultSchema } from "@/lib/llm/reflection";
 import { KptBoard } from "./kpt-board";
+import { ReflectionPanel } from "./reflection-panel";
 
 export default async function RetrospectivePage({
   params,
@@ -14,7 +16,6 @@ export default async function RetrospectivePage({
   const { teamId, retroId } = await params;
   const user = await requireUser();
 
-  // メンバーのチームのふりかえりだけ表示
   const retro = await prisma.retrospective.findFirst({
     where: {
       id: retroId,
@@ -25,9 +26,15 @@ export default async function RetrospectivePage({
       team: true,
       previous: true,
       notes: { orderBy: { createdAt: "asc" } },
+      reflections: { orderBy: { createdAt: "desc" }, take: 1 },
+      actionEvaluations: { include: { action: true }, orderBy: { createdAt: "asc" } },
+      createdActions: { orderBy: { createdAt: "desc" } },
     },
   });
   if (!retro) notFound();
+
+  const latest = retro.reflections[0] ?? null;
+  const parsed = latest ? ReflectionResultSchema.safeParse(latest.rawOutput) : null;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -54,10 +61,26 @@ export default async function RetrospectivePage({
           <KptBoard teamId={teamId} retroId={retroId} notes={retro.notes} />
         </section>
 
-        <section className="card border-dashed p-6 text-sm text-muted">
-          <p className="eyebrow mb-1">Coming next</p>
-          AI問い返しはこの後のステップで実装します。
-        </section>
+        <ReflectionPanel
+          teamId={teamId}
+          retroId={retroId}
+          hasRun={latest !== null}
+          model={latest?.model ?? null}
+          reflectionId={latest?.id ?? null}
+          evaluations={retro.actionEvaluations.map((ev) => ({
+            actionContent: ev.action.content,
+            outcome: ev.outcome,
+            reason: ev.reason,
+            question: ev.question,
+          }))}
+          probes={parsed?.success ? parsed.data.probes : []}
+          proposedActions={parsed?.success ? parsed.data.proposedActions : []}
+          adoptedActions={retro.createdActions.map((a) => ({
+            id: a.id,
+            content: a.content,
+            status: a.status,
+          }))}
+        />
       </main>
     </div>
   );

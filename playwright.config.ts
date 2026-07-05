@@ -24,5 +24,7 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: true,
     timeout: 120_000,
+    // E2Eは決定論的に（＆無料枠を消費しないように）モックLLMで走らせる
+    env: { LLM_PROVIDER: "mock" },
   },
 });
