@@ -1,10 +1,9 @@
 // RetroLoop — Prisma schema
-// 技術決定は docs/DECISIONS.md (ADR-001) を参照。
+// 技術決定は docs/DECISIONS.md (ADR-001/002)、データモデルは docs/DATA_MODEL.md を参照。
 //
-// このファイルには現時点で Auth.js(NextAuth) の Prisma アダプタが必要とする
-// 認証モデルのみを置いている。
-// ドメインモデル（Team / Sprint / Note(KPT) / AiReflection / Action など）は
-// 「データモデルは自分で設計」する人間主導ステップとして次に設計する。TODO を参照。
+// 認証系(User/Account/Session/VerificationToken)は Auth.js 用。
+// ドメイン系(Team/Membership/Retrospective/Note/Reflection/Action/ActionEvaluation)は
+// docs/DATA_MODEL.md v2 に沿って定義。
 
 generator client {
   provider = "prisma-client-js"
@@ -28,6 +27,10 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+
+  // ドメイン関連
+  memberships Membership[]
+  notes       Note[] // 書いた付箋
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -68,10 +71,144 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// TODO(データモデル設計・人間主導): 以下のドメインモデルを次に設計して追加する。
-//   Team         … チーム（Team > Sprint の浅い階層）
-//   Membership   … User と Team の関連（MVPは最小）
-//   Sprint       … スプリント
-//   Note         … 付箋（KPT: KEEP / PROBLEM / TRY）
-//   AiReflection … AI問い返しの構造化結果（差別化の核）
-//   Action       … 改善アクション（次スプリントへ持ち越し・効果追跡ループ）
+// ─────────────────────────────────────────────
+// Domain models — docs/DATA_MODEL.md v2
+// ─────────────────────────────────────────────
+
+enum NoteKind {
+  KEEP
+  PROBLEM
+  TRY
+}
+
+enum ActionStatus {
+  OPEN // 追跡中
+  DONE // 効いた→完了
+  DROPPED // 打ち切り
+}
+
+enum ActionOutcome {
+  WORKED // 効いた
+  NOT_WORKED // 効いてない
+  NOT_DONE // 未着手
+  // 「確認中」は ActionEvaluation.outcome = null で表現する
+}
+
+enum EvaluationSource {
+  AI // AIの自動判定
+  HUMAN // 人が確定・上書き・問い返しへの回答
+}
+
+model Team {
+  id   String @id @default(cuid())
+  name String
+
+  memberships    Membership[]
+  retrospectives Retrospective[]
+  actions        Action[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Membership {
+  id     String @id @default(cuid())
+  userId String
+  teamId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, teamId])
+}
+
+/// ふりかえり（中心単位）。スプリントレトロに限らず月次/PJ/インシデント振り返りにも使う。
+/// 前後関係は previousRetrospectiveId の明示リンクで保持（createdAt順に依存しない）。
+model Retrospective {
+  id     String @id @default(cuid())
+  teamId String
+  name   String
+
+  // 前回のふりかえりへの自己リンク（最初の回は null）
+  previousRetrospectiveId String?
+  previous                Retrospective?  @relation("RetroChain", fields: [previousRetrospectiveId], references: [id], onDelete: SetNull)
+  nexts                   Retrospective[] @relation("RetroChain")
+
+  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  notes       Note[]
+  reflections Reflection[]
+
+  createdActions    Action[]           @relation("ActionCreatedIn")
+  actionEvaluations ActionEvaluation[] @relation("EvaluatedIn")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Note {
+  id              String   @id @default(cuid())
+  retrospectiveId String
+  authorId        String
+  kind            NoteKind
+  content         String
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade)
+  author        User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// AI問い返しの1回の応答。再実行すると増える（履歴が残る）。
+model Reflection {
+  id              String @id @default(cuid())
+  retrospectiveId String
+  model           String // 使ったClaudeモデル名
+
+  questions Json // 問い返し文（構造化）
+  rawOutput Json // AIの構造化出力まるごと（判定・問い返し・アクション案）
+
+  retrospective Retrospective @relation(fields: [retrospectiveId], references: [id], onDelete: Cascade)
+  actions       Action[] // この応答から生まれたアクション
+
+  createdAt DateTime @default(now())
+}
+
+/// 改善アクション（主役）。ふりかえりをまたいで効果を追跡され続ける。
+model Action {
+  id                       String       @id @default(cuid())
+  teamId                   String
+  createdInRetrospectiveId String
+  sourceReflectionId       String?
+  content                  String
+  status                   ActionStatus @default(OPEN)
+
+  team             Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdIn        Retrospective      @relation("ActionCreatedIn", fields: [createdInRetrospectiveId], references: [id], onDelete: Cascade)
+  sourceReflection Reflection?        @relation(fields: [sourceReflectionId], references: [id], onDelete: SetNull)
+  evaluations      ActionEvaluation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// 効果判定（ふりかえりごとに1件）。効果追跡ループの心臓。
+model ActionEvaluation {
+  id                         String           @id @default(cuid())
+  actionId                   String
+  evaluatedInRetrospectiveId String
+  outcome                    ActionOutcome? // null = 確認中（AIが判定できずユーザに問い返し中）
+  source                     EvaluationSource
+  reason                     String? // 判定理由（AIの根拠 or 人のコメント）
+  question                   String? // AIがユーザに投げた問い返し文（outcome=null のとき）
+
+  action      Action        @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  evaluatedIn Retrospective @relation("EvaluatedIn", fields: [evaluatedInRetrospectiveId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([actionId, evaluatedInRetrospectiveId])
+}
