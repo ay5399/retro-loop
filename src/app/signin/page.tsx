@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { signIn } from "@/auth";
 
 // ログイン画面：メールアドレスを入れてマジックリンクを送る
@@ -5,8 +6,9 @@ export default function SignInPage() {
   async function sendMagicLink(formData: FormData) {
     "use server";
     const email = String(formData.get("email") ?? "").trim();
-    // 成功すると Auth.js が /signin/verify にリダイレクトする
-    await signIn("resend", { email, redirectTo: "/" });
+    // メール送信のみ行い（redirect:false）、自前の確認画面へ遷移する
+    await signIn("resend", { email, redirect: false, redirectTo: "/" });
+    redirect("/signin/verify");
   }
 
   return (

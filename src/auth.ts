@@ -26,6 +26,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           console.log(
             `\n🔑 [DEV] ${email} のログインリンク:\n${url}\n（このリンクをブラウザで開くとログインできます）\n`,
           );
+          // E2Eテスト用フック：最新のマジックリンクをファイルにも書き出す（.gitignore済み）
+          try {
+            const { writeFileSync } = await import("node:fs");
+            writeFileSync(".magic-link.dev", url, "utf8");
+          } catch {
+            // ファイル書き込みに失敗しても本処理は続行
+          }
         }
 
         // Resend のキーが無ければ実メールは送らない（＝開発はターミナル出力で完結）

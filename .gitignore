@@ -35,6 +35,13 @@ yarn-error.log*
 # ただしテンプレートは追跡する
 !.env.example
 
+# E2E(Playwright) 生成物・開発用マジックリンク
+.magic-link.dev
+/test-results/
+/playwright-report/
+/e2e/.auth/
+/e2e/__screens__/
+
 # vercel
 .vercel
 
