@@ -22,6 +22,15 @@
   --try: #2ca5a0;
   --warn: #d9922b; /* 確認中 */
 
+  /* 付箋カード背景の淡色パレット（機能色とは別系統・親しみ重視）。
+     ペールで彩度控えめ、--ink(暗)が読める明るさに統一。 */
+  --note-yellow: #f7edc8;
+  --note-green: #d8ecdd;
+  --note-blue: #d9e6f6;
+  --note-pink: #f6dde7;
+  --note-purple: #e6e1f7;
+  --note-gray: #e5e8ef;
+
   --radius: 14px;
 }
 
@@ -44,6 +53,14 @@
     --problem: #f0707c;
     --try: #3fbdb6;
     --warn: #e6a545;
+
+    /* 付箋カード背景（ダーク）：暗めの淡色。--ink(明)が読める沈んだトーン。 */
+    --note-yellow: #3b3521;
+    --note-green: #1e332a;
+    --note-blue: #1d2c40;
+    --note-pink: #392433;
+    --note-purple: #2a2543;
+    --note-gray: #272c37;
   }
 }
 
@@ -63,6 +80,12 @@
   --color-problem: var(--problem);
   --color-try: var(--try);
   --color-warn: var(--warn);
+  --color-note-yellow: var(--note-yellow);
+  --color-note-green: var(--note-green);
+  --color-note-blue: var(--note-blue);
+  --color-note-pink: var(--note-pink);
+  --color-note-purple: var(--note-purple);
+  --color-note-gray: var(--note-gray);
 
   --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;

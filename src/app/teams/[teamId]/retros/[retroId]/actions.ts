@@ -5,6 +5,7 @@ import { NoteKind, Prisma, ActionOutcome } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
 import { reflect, llmModelLabel, type ReflectionInput } from "@/lib/llm/reflection";
+import { isNoteColor, type NoteColor } from "@/lib/note-colors";
 
 // このふりかえりが、ログインユーザーが所属するチームのものか確認する
 async function assertRetroAccess(teamId: string, retroId: string, userId: string) {
@@ -60,6 +61,29 @@ export async function updateNote(
       retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
     },
     data: { content },
+  });
+  revalidateRetro(teamId, retroId);
+}
+
+// 付箋の色を変更（null でデフォルトに戻す。不正値は無視）
+export async function setNoteColor(
+  teamId: string,
+  retroId: string,
+  noteId: string,
+  color: NoteColor | null,
+): Promise<void> {
+  const user = await requireUser();
+
+  // null（色なし）と有効なパレット値のみ許可。それ以外は無視。
+  if (color !== null && !isNoteColor(color)) return;
+
+  await prisma.note.updateMany({
+    where: {
+      id: noteId,
+      retrospectiveId: retroId,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    data: { color },
   });
   revalidateRetro(teamId, retroId);
 }

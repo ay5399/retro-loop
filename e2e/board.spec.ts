@@ -175,3 +175,59 @@ test("キーボードでレーンを跨いで移動でき永続化される", as
 
   await page.screenshot({ path: "e2e/__screens__/board.png", fullPage: true });
 });
+
+// 付箋の色ピッカーを開く（「色」トグル→スウォッチ/クリアが現れる）
+async function openColorPicker(page: Page, noteId: string) {
+  await page
+    .locator(`[data-note-id="${noteId}"]`)
+    .getByRole("button", { name: "色", exact: true })
+    .click();
+}
+
+test("付箋の色を変更でき永続化される（Phase 2）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+
+  const note = noteInLane(page, "KEEP", ids.keep1);
+  await expect(note).toBeVisible();
+  // 初期はデフォルト（色なし）
+  await expect(note).toHaveAttribute("data-note-color", "");
+
+  // 色ピッカーを開き blue スウォッチを選ぶ
+  await openColorPicker(page, ids.keep1);
+  await note.getByRole("button", { name: "色: blue" }).click();
+
+  // UI: data-note-color が blue になる（楽観反映）
+  await expect(note).toHaveAttribute("data-note-color", "blue");
+
+  // DB: revalidate 後 color === "blue"
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    expect(k1?.color).toBe("blue");
+  }).toPass({ timeout: 40_000 });
+
+  // 色が付いた状態のスクショ
+  await page.screenshot({ path: "e2e/__screens__/board-color.png", fullPage: true });
+
+  // reload 後も維持（永続化＝DB反映の実証）
+  await page.reload();
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toHaveAttribute(
+    "data-note-color",
+    "blue",
+  );
+
+  // 「クリア」で null（data-note-color="" かつ DB color=null）に戻る
+  await openColorPicker(page, ids.keep1);
+  await noteInLane(page, "KEEP", ids.keep1)
+    .getByRole("button", { name: "色をクリア（デフォルトに戻す）" })
+    .click();
+
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toHaveAttribute(
+    "data-note-color",
+    "",
+  );
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    expect(k1?.color).toBeNull();
+  }).toPass({ timeout: 40_000 });
+});

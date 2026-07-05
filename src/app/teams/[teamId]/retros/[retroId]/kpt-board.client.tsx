@@ -20,7 +20,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { addNote, updateNote, deleteNote, moveNote } from "./actions";
+import { addNote, updateNote, deleteNote, moveNote, setNoteColor } from "./actions";
+import { NOTE_COLORS, type NoteColor } from "@/lib/note-colors";
 
 type NoteKind = "KEEP" | "PROBLEM" | "TRY";
 
@@ -84,8 +85,31 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
   );
 
   const [optimisticNotes, applyMove] = useOptimistic(baseNotes, moveReducer);
+  // 色専用の軽い楽観状態: noteId -> 色キー(または null)。
+  // base は空オブジェクトなので、transition 完了・revalidate 後は props(note.color) が真実源に戻る。
+  const [colorOverrides, applyColor] = useOptimistic<
+    Record<string, NoteColor | null>,
+    { noteId: string; color: NoteColor | null }
+  >({}, (state, action) => ({ ...state, [action.noteId]: action.color }));
   const [, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  // 色の楽観上書きを適用した表示用ノート。並び(move)とは独立に色だけ差し替える。
+  const displayNotes = useMemo(
+    () =>
+      optimisticNotes.map((n) =>
+        n.id in colorOverrides ? { ...n, color: colorOverrides[n.id] } : n,
+      ),
+    [optimisticNotes, colorOverrides],
+  );
+
+  // 色変更を楽観適用してからサーバへ確定する。move と同じ作法で transition 内 await。
+  function handleSetColor(noteId: string, color: NoteColor | null) {
+    startTransition(async () => {
+      applyColor({ noteId, color });
+      await setNoteColor(teamId, retroId, noteId, color);
+    });
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -173,7 +197,8 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
             retroId={retroId}
             column={col}
             itemIds={laneItems[col.kind]}
-            notes={optimisticNotes.filter((n) => n.kind === col.kind)}
+            notes={displayNotes.filter((n) => n.kind === col.kind)}
+            onSetColor={handleSetColor}
           />
         ))}
       </div>
@@ -191,12 +216,14 @@ function Lane({
   column,
   itemIds,
   notes,
+  onSetColor,
 }: {
   teamId: string;
   retroId: string;
   column: { kind: NoteKind; label: string; hint: string; color: string };
   itemIds: string[];
   notes: NoteDTO[];
+  onSetColor: (noteId: string, color: NoteColor | null) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.kind });
   const add = addNote.bind(null, teamId, retroId, column.kind);
@@ -222,6 +249,7 @@ function Lane({
               teamId={teamId}
               retroId={retroId}
               note={note}
+              onSetColor={onSetColor}
             />
           ))}
           {notes.length === 0 && (
@@ -252,10 +280,12 @@ function SortableNote({
   teamId,
   retroId,
   note,
+  onSetColor,
 }: {
   teamId: string;
   retroId: string;
   note: NoteDTO;
+  onSetColor: (noteId: string, color: NoteColor | null) => void;
 }) {
   const {
     attributes,
@@ -266,10 +296,15 @@ function SortableNote({
     isDragging,
   } = useSortable({ id: note.id });
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // 色があればその CSS 変数を背景に敷く。null なら既定の bg-surface-2 のまま。
+  const colored = note.color != null && note.color !== "";
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : undefined,
+    ...(colored ? { background: `var(--note-${note.color})` } : {}),
   };
 
   return (
@@ -278,7 +313,9 @@ function SortableNote({
       style={style}
       data-note-id={note.id}
       data-note-color={note.color ?? ""}
-      className="rounded-lg border border-line bg-surface-2 p-2.5 text-sm"
+      className={`rounded-lg border border-line p-2.5 text-sm ${
+        colored ? "" : "bg-surface-2"
+      }`}
     >
       <div className="flex items-start gap-2">
         {/* ドラッグはこのハンドルに限定。listeners/attributes をここだけに付与。 */}
@@ -315,12 +352,54 @@ function SortableNote({
                 </button>
               </form>
             </details>
+            <button
+              type="button"
+              aria-expanded={pickerOpen}
+              onClick={() => setPickerOpen((v) => !v)}
+              className="cursor-pointer hover:text-ink"
+            >
+              色
+            </button>
             <form action={deleteNote.bind(null, teamId, retroId, note.id)}>
               <button type="submit" className="hover:text-problem">
                 削除
               </button>
             </form>
           </div>
+
+          {pickerOpen && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {NOTE_COLORS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={`色: ${key}`}
+                  aria-pressed={note.color === key}
+                  onClick={() => {
+                    onSetColor(note.id, key);
+                    setPickerOpen(false);
+                  }}
+                  style={{ background: `var(--note-${key})` }}
+                  className={`h-6 w-6 rounded-full border ${
+                    note.color === key
+                      ? "border-line-strong ring-2 ring-line-strong"
+                      : "border-line"
+                  }`}
+                />
+              ))}
+              <button
+                type="button"
+                aria-label="色をクリア（デフォルトに戻す）"
+                onClick={() => {
+                  onSetColor(note.id, null);
+                  setPickerOpen(false);
+                }}
+                className="ml-1 rounded border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+              >
+                クリア
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </li>
