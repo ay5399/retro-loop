@@ -11,7 +11,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // アプリ実行時: Neon のプール接続(-pooler付き)。Vercel サーバレスに向く
+  url       = env("DATABASE_URL")
+  // マイグレーション時: Neon の直結接続(-pooler無し)。prisma migrate はプール接続だと不安定なため分離
+  directUrl = env("DIRECT_URL")
 }
 
 // ─────────────────────────────────────────────
