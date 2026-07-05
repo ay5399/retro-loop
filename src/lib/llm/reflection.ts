@@ -2,22 +2,34 @@ import { z } from "zod";
 import { generateStructured, getLlm } from "./index";
 
 // ── AI問い返しの構造（docs/AI_REFLECTION.md）───────────
+// LLM によっては文字列配列で返すことがあるため、文字列でもオブジェクトでも受ける。
+const ProbeSchema = z.union([
+  z.string().transform((s) => ({ question: s, focus: "" })),
+  z.object({ question: z.string(), focus: z.string().default("") }),
+]);
+const ProposedActionSchema = z.union([
+  z.string().transform((s) => ({ content: s, rationale: "" })),
+  z.object({ content: z.string(), rationale: z.string().default("") }),
+]);
+
 export const ReflectionResultSchema = z.object({
   // (a) 前回アクションの効果判定
-  evaluations: z.array(
-    z.object({
-      actionId: z.string(),
-      // null = 付箋から判断できない（question で確認する）
-      outcome: z.enum(["WORKED", "NOT_WORKED", "NOT_DONE"]).nullable(),
-      reason: z.string(),
-      question: z.string().nullable().default(null),
-      suggestion: z.enum(["continue", "revise", "drop"]).nullable().default(null),
-    }),
-  ),
+  evaluations: z
+    .array(
+      z.object({
+        actionId: z.string(),
+        // null = 付箋から判断できない（question で確認する）
+        outcome: z.enum(["WORKED", "NOT_WORKED", "NOT_DONE"]).nullable().default(null),
+        reason: z.string().default(""),
+        question: z.string().nullable().default(null),
+        suggestion: z.enum(["continue", "revise", "drop"]).nullable().default(null),
+      }),
+    )
+    .default([]),
   // (b) 問い返し（形骸化チェック）
-  probes: z.array(z.object({ question: z.string(), focus: z.string().default("") })),
+  probes: z.array(ProbeSchema).default([]),
   // (c) 新しい改善アクション案
-  proposedActions: z.array(z.object({ content: z.string(), rationale: z.string() })),
+  proposedActions: z.array(ProposedActionSchema).default([]),
 });
 export type ReflectionResult = z.infer<typeof ReflectionResultSchema>;
 
@@ -55,7 +67,21 @@ ${prev}
 # これまでのナレッジ（過去のアクションと結果）
 ${knowledge}
 
-上記をもとに、evaluations（前回アクションごとの効果判定）・probes（問い返し1〜3件）・proposedActions（新アクション案1〜3件）を JSON で返してください。前回アクションが空なら evaluations は空配列にしてください。`;
+上記をもとに、次の**厳密なJSON形式**で返してください（キー名・入れ子・型を守ること）:
+
+{
+  "evaluations": [
+    { "actionId": "前回アクションのid", "outcome": "WORKED" | "NOT_WORKED" | "NOT_DONE" | null, "reason": "判定の根拠(今回の付箋のどこから読み取ったか)", "question": "outcomeがnullのときの確認質問、それ以外はnull", "suggestion": "continue" | "revise" | "drop" | null }
+  ],
+  "probes": [
+    { "question": "問い返しの文", "focus": "何について問うているか" }
+  ],
+  "proposedActions": [
+    { "content": "具体的な改善アクション", "rationale": "なぜこれか" }
+  ]
+}
+
+制約: probes と proposedActions は必ず上記の**オブジェクト**の配列にする（文字列の配列にしない）。probes・proposedActions は各1〜3件。前回アクションが空なら evaluations は空配列にする。`;
 }
 
 // 本体：入力を組み立てて LLM に投げ、検証済みの構造を返す。
