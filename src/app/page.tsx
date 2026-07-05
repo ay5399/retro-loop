@@ -21,19 +21,27 @@ export default async function Home() {
               {session.user.email ?? session.user.name}
             </span>
           </p>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/" });
-            }}
-          >
-            <button
-              type="submit"
-              className="rounded-md border border-black/15 px-3 py-2 text-sm transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+          <div className="flex items-center gap-3">
+            <Link
+              href="/teams"
+              className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
             >
-              ログアウト
-            </button>
-          </form>
+              チームへ
+            </Link>
+            <form
+              action={async () => {
+                "use server";
+                await signOut({ redirectTo: "/" });
+              }}
+            >
+              <button
+                type="submit"
+                className="rounded-md border border-black/15 px-3 py-2 text-sm transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+              >
+                ログアウト
+              </button>
+            </form>
+          </div>
         </div>
       ) : (
         <div>

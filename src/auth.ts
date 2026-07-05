@@ -15,6 +15,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/signin",
     verifyRequest: "/signin/verify",
   },
+  callbacks: {
+    // データベースセッションでは user(DBレコード) が渡るので、id をセッションに載せる
+    session({ session, user }) {
+      if (session.user) session.user.id = user.id;
+      return session;
+    },
+  },
   providers: [
     Resend({
       // 未設定なら開発フォールバック（下の sendVerificationRequest でターミナル出力のみ）
