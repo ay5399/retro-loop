@@ -9,6 +9,8 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   timeout: 60_000,
+  // 初回のサーバアクションは dev サーバのコンパイル＋DBコールドで遅くなるため長めに
+  expect: { timeout: 15_000 },
   use: {
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",

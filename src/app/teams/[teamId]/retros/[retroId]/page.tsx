@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
+import { KptBoard } from "./kpt-board";
 
 export default async function RetrospectivePage({
   params,
@@ -18,7 +19,11 @@ export default async function RetrospectivePage({
       teamId,
       team: { memberships: { some: { userId: user.id } } },
     },
-    include: { team: true, previous: true },
+    include: {
+      team: true,
+      previous: true,
+      notes: { orderBy: { createdAt: "asc" } },
+    },
   });
   if (!retro) notFound();
 
@@ -43,8 +48,10 @@ export default async function RetrospectivePage({
         )}
       </div>
 
+      <KptBoard teamId={teamId} retroId={retroId} notes={retro.notes} />
+
       <section className="rounded-md border border-dashed border-black/15 p-6 text-sm text-black/50 dark:border-white/20 dark:text-white/50">
-        KPT付箋・AI問い返しはこの後のステップで実装します。
+        AI問い返しはこの後のステップで実装します。
       </section>
     </main>
   );
