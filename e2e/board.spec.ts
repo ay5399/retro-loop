@@ -120,6 +120,33 @@ test("キーボードでレーン内の並べ替えができ永続化される",
   ).toHaveAttribute("data-note-id", ids.keep2);
 });
 
+test("キーボードでレーン内を下方向に並べ替えできる（回帰）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+
+  // 初期は keep1(order0), keep2(order1)。keep1 を下へ動かして末尾にする。
+  // （下方向ドラッグが no-op になる不具合の回帰防止）
+  await keyboardDrag(page, ids.keep1, ["ArrowDown"]);
+
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    const k2 = await prisma.note.findUnique({ where: { id: ids.keep2 } });
+    expect(k1?.order).toBe(1);
+    expect(k2?.order).toBe(0);
+  }).toPass({ timeout: 40_000 });
+
+  // UI: KEEP レーンの先頭が keep2 になっている
+  await expect(
+    page.locator(`[data-lane="KEEP"] [data-note-id]`).first(),
+  ).toHaveAttribute("data-note-id", ids.keep2);
+
+  await page.reload();
+  await expect(
+    page.locator(`[data-lane="KEEP"] [data-note-id]`).first(),
+  ).toHaveAttribute("data-note-id", ids.keep2);
+});
+
 test("キーボードでレーンを跨いで移動でき永続化される", async ({ page }) => {
   await loginViaMagicLink(page, TEST_EMAIL);
   await page.goto(`/teams/${teamId}/retros/${retroId}`);

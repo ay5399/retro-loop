@@ -121,8 +121,10 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
 
     const noteId = String(active.id);
     const overId = String(over.id);
+    if (overId === noteId) return; // 自分自身へのドロップ=変化なし
     const toKind = laneOf(overId);
     if (!toKind) return;
+    const fromKind = laneOf(noteId);
 
     // 対象レーンから active を除いた並びを基準に差し込み位置を求める。
     const targetIds = laneItems[toKind].filter((id) => id !== noteId);
@@ -130,11 +132,19 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
     if (isKind(overId)) {
       toIndex = targetIds.length; // 空レーン/レーン枠へのドロップ = 末尾
     } else {
-      const idx = targetIds.indexOf(overId);
-      toIndex = idx === -1 ? targetIds.length : idx;
+      const overPos = targetIds.indexOf(overId);
+      if (overPos === -1) {
+        toIndex = targetIds.length;
+      } else if (fromKind === toKind) {
+        // 同レーン内: 下方向(active が over より上にある)なら over の後ろへ差し込む
+        const fullLane = laneItems[toKind];
+        const draggingDown = fullLane.indexOf(noteId) < fullLane.indexOf(overId);
+        toIndex = draggingDown ? overPos + 1 : overPos;
+      } else {
+        toIndex = overPos; // レーン跨ぎ: over の手前へ
+      }
     }
 
-    const fromKind = laneOf(noteId);
     const fromIndex = laneItems[toKind].indexOf(noteId);
     // 位置に変化が無ければ何もしない。
     if (fromKind === toKind && fromIndex === toIndex) return;
