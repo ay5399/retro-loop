@@ -46,24 +46,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const apiKey = provider.apiKey;
         if (!apiKey) return;
 
-        const res = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: provider.from,
-            to: email,
-            subject: "RetroLoop へのログイン",
-            html: `<p><a href="${url}">RetroLoop にログイン</a></p><p>心当たりがなければ、このメールは無視してください。</p>`,
-            text: `RetroLoop にログイン: ${url}\n心当たりがなければ無視してください。`,
-          }),
-        });
-
-        if (!res.ok) {
-          const detail = await res.text();
-          throw new Error(`Resend への送信に失敗しました: ${detail}`);
+        const isDev = process.env.NODE_ENV !== "production";
+        try {
+          const res = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from: provider.from,
+              to: email,
+              subject: "RetroLoop へのログイン",
+              html: `<p><a href="${url}">RetroLoop にログイン</a></p><p>心当たりがなければ、このメールは無視してください。</p>`,
+              text: `RetroLoop にログイン: ${url}\n心当たりがなければ無視してください。`,
+            }),
+          });
+          if (!res.ok) {
+            throw new Error(`Resend への送信に失敗しました: ${await res.text()}`);
+          }
+        } catch (e) {
+          // 開発中はターミナルにリンクが出ているので送信失敗は致命的にしない。
+          // 本番は呼び出し元にエラーを伝える。
+          if (isDev) {
+            console.warn("[DEV] Resend 送信に失敗（ターミナルのリンクでログイン可）:", e);
+            return;
+          }
+          throw e;
         }
       },
     }),

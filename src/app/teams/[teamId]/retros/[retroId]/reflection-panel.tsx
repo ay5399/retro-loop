@@ -1,11 +1,11 @@
 import { ActionOutcome } from "@prisma/client";
 import {
-  runReflection,
   adoptProposedAction,
   setEvaluationOutcome,
   carryOverAction,
   dropAction,
 } from "./actions";
+import { RunReflection } from "./run-reflection";
 
 type Evaluation = {
   evaluationId: string;
@@ -58,7 +58,6 @@ export function ReflectionPanel({
   reflectionId: string | null;
   adoptedActions: AdoptedAction[];
 }) {
-  const run = runReflection.bind(null, teamId, retroId);
   const adopt = adoptProposedAction.bind(null, teamId, retroId);
   const setOutcome = setEvaluationOutcome.bind(null, teamId, retroId);
   const carryOver = carryOverAction.bind(null, teamId, retroId);
@@ -133,13 +132,9 @@ export function ReflectionPanel({
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <p className="eyebrow">AI 問い返し</p>
-        <form action={run}>
-          <button type="submit" className="btn btn-primary btn-sm">
-            {hasRun ? "もう一度 問い返す" : "AIに問い返してもらう"}
-          </button>
-        </form>
+        <RunReflection teamId={teamId} retroId={retroId} hasRun={hasRun} />
       </div>
 
       {!hasRun ? (
@@ -233,12 +228,15 @@ export function ReflectionPanel({
         <div className="card p-5">
           <p className="eyebrow mb-3">今回のアクション</p>
           <ul className="space-y-2">
-            {adoptedActions.map((a) => (
-              <li key={a.id} className="flex items-center gap-2 text-sm">
-                <span className="badge text-iris">{a.status}</span>
-                <span>{a.content}</span>
-              </li>
-            ))}
+            {adoptedActions.map((a) => {
+              const s = ACTION_STATUS[a.status] ?? ACTION_STATUS.OPEN;
+              return (
+                <li key={a.id} className="flex items-center gap-2 text-sm">
+                  <span className={`badge ${s.color}`}>{s.label}</span>
+                  <span>{a.content}</span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

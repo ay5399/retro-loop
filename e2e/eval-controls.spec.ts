@@ -112,9 +112,12 @@ test.afterAll(async () => {
   await prisma.$disconnect();
 });
 
-// action の content で行(li)をスコープする
+// action の content で行(li)をスコープする（「前回アクションの判定」カード内に限定。
+// 「今回のアクション」カードにも同じ content が出るため）
 function row(page: Page, content: string) {
-  return page.locator("li", { hasText: content });
+  return page
+    .locator("div.card", { hasText: "前回アクションの判定" })
+    .locator("li", { hasText: content });
 }
 // 行の先頭バッジ(= outcome ラベル)
 function topBadge(page: Page, content: string) {

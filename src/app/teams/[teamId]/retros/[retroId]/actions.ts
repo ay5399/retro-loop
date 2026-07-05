@@ -190,9 +190,17 @@ export async function dropAction(
   revalidateRetro(teamId, retroId);
 }
 
+export type RunReflectionState = { error: string | null };
+
 // AI問い返しを実行する（差別化の核）
 // 付箋＋前回OPENアクション＋ナレッジを渡し、判定・問い返し・新アクション案を得て保存する。
-export async function runReflection(teamId: string, retroId: string) {
+// useActionState 用のシグネチャ。AI失敗時は例外を投げず error を返して画面を保つ。
+export async function runReflection(
+  teamId: string,
+  retroId: string,
+  _prev: RunReflectionState,
+  _formData: FormData,
+): Promise<RunReflectionState> {
   const user = await requireUser();
 
   const retro = await prisma.retrospective.findFirst({
@@ -203,7 +211,7 @@ export async function runReflection(teamId: string, retroId: string) {
     },
     include: { notes: true },
   });
-  if (!retro) throw new Error("アクセス権がありません");
+  if (!retro) return { error: "アクセス権がありません。" };
 
   // 前回ふりかえりの OPEN アクション（判定対象）
   const previousActions = retro.previousRetrospectiveId
@@ -231,7 +239,15 @@ export async function runReflection(teamId: string, retroId: string) {
     })),
   };
 
-  const result = await reflect(input);
+  let result;
+  try {
+    result = await reflect(input);
+  } catch (e) {
+    console.error("reflect() failed:", e);
+    return {
+      error: "AIの応答を取得できませんでした。少し待ってからもう一度お試しください。",
+    };
+  }
 
   // Reflection を保存
   await prisma.reflection.create({
@@ -276,4 +292,5 @@ export async function runReflection(teamId: string, retroId: string) {
   }
 
   revalidateRetro(teamId, retroId);
+  return { error: null };
 }
