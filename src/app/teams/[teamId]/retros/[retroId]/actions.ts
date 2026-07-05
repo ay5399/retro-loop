@@ -190,6 +190,78 @@ export async function dropAction(
   revalidateRetro(teamId, retroId);
 }
 
+// 付箋をドラッグ移動して並び順を永続化する（レーン内移動 or レーン間移動）
+export async function moveNote(
+  teamId: string,
+  retroId: string,
+  input: { noteId: string; toKind: NoteKind; toIndex: number },
+): Promise<void> {
+  const user = await requireUser();
+  await assertRetroAccess(teamId, retroId, user.id);
+
+  await prisma.$transaction(async (tx) => {
+    // 対象付箋をメンバーシップ認可付きで取得
+    const note = await tx.note.findFirst({
+      where: {
+        id: input.noteId,
+        retrospectiveId: retroId,
+        retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+      },
+      select: { id: true, kind: true },
+    });
+    if (!note) return;
+
+    const fromKind = note.kind;
+    const toKind = input.toKind;
+
+    // 移動先レーンの付箋（自分を除く）を order 昇順で取得
+    const destNotes = await tx.note.findMany({
+      where: {
+        retrospectiveId: retroId,
+        kind: toKind,
+        id: { not: note.id },
+      },
+      orderBy: { order: "asc" },
+      select: { id: true },
+    });
+
+    // toIndex に対象を挿入した並びを作る（範囲外は末尾へクランプ）
+    const clampedIndex = Math.max(0, Math.min(input.toIndex, destNotes.length));
+    const ordered: string[] = [
+      ...destNotes.slice(0, clampedIndex).map((n) => n.id),
+      note.id,
+      ...destNotes.slice(clampedIndex).map((n) => n.id),
+    ];
+
+    // 0..n で連番を振り直す（対象付箋は kind も更新）
+    for (let i = 0; i < ordered.length; i++) {
+      const id = ordered[i];
+      await tx.note.update({
+        where: { id },
+        data: id === note.id ? { order: i, kind: toKind } : { order: i },
+      });
+    }
+
+    // レーンをまたいだ場合は元レーンも order を 0..n に詰め直す
+    if (fromKind !== toKind) {
+      const fromNotes = await tx.note.findMany({
+        where: {
+          retrospectiveId: retroId,
+          kind: fromKind,
+          id: { not: note.id },
+        },
+        orderBy: { order: "asc" },
+        select: { id: true },
+      });
+      for (let i = 0; i < fromNotes.length; i++) {
+        await tx.note.update({ where: { id: fromNotes[i].id }, data: { order: i } });
+      }
+    }
+  });
+
+  revalidateRetro(teamId, retroId);
+}
+
 export type RunReflectionState = { error: string | null };
 
 // AI問い返しを実行する（差別化の核）

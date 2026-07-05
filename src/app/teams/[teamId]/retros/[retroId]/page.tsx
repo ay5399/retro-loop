@@ -5,7 +5,7 @@ import { requireUser } from "@/lib/auth-helpers";
 import { AppHeader } from "@/components/app-header";
 import { LoopMark } from "@/components/loop";
 import { ReflectionResultSchema } from "@/lib/llm/reflection";
-import { KptBoard } from "./kpt-board";
+import { KptBoardClient } from "./kpt-board.client";
 import { ReflectionPanel } from "./reflection-panel";
 
 export default async function RetrospectivePage({
@@ -25,13 +25,24 @@ export default async function RetrospectivePage({
     include: {
       team: true,
       previous: true,
-      notes: { orderBy: { createdAt: "asc" } },
+      notes: { orderBy: [{ kind: "asc" }, { order: "asc" }], include: { votes: true } },
       reflections: { orderBy: { createdAt: "desc" }, take: 1 },
       actionEvaluations: { include: { action: true }, orderBy: { createdAt: "asc" } },
       createdActions: { orderBy: { createdAt: "desc" } },
     },
   });
   if (!retro) notFound();
+
+  const noteDtos = retro.notes.map((n) => ({
+    id: n.id,
+    kind: n.kind,
+    content: n.content,
+    order: n.order,
+    color: n.color,
+    groupId: n.groupId,
+    voteCount: n.votes.length,
+    hasVoted: n.votes.some((v) => v.userId === user.id),
+  }));
 
   const latest = retro.reflections[0] ?? null;
   const parsed = latest ? ReflectionResultSchema.safeParse(latest.rawOutput) : null;
@@ -58,7 +69,7 @@ export default async function RetrospectivePage({
 
         <section className="space-y-3">
           <p className="eyebrow">KPT</p>
-          <KptBoard teamId={teamId} retroId={retroId} notes={retro.notes} />
+          <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} />
         </section>
 
         <ReflectionPanel
