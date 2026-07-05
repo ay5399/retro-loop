@@ -68,6 +68,9 @@ export default async function RetrospectivePage({
           model={latest?.model ?? null}
           reflectionId={latest?.id ?? null}
           evaluations={retro.actionEvaluations.map((ev) => ({
+            evaluationId: ev.id,
+            actionId: ev.actionId,
+            actionStatus: ev.action.status,
             actionContent: ev.action.content,
             outcome: ev.outcome,
             reason: ev.reason,

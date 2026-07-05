@@ -1,7 +1,16 @@
 import { ActionOutcome } from "@prisma/client";
-import { runReflection, adoptProposedAction } from "./actions";
+import {
+  runReflection,
+  adoptProposedAction,
+  setEvaluationOutcome,
+  carryOverAction,
+  dropAction,
+} from "./actions";
 
 type Evaluation = {
+  evaluationId: string;
+  actionId: string;
+  actionStatus: "OPEN" | "DONE" | "DROPPED";
   actionContent: string;
   outcome: ActionOutcome | null;
   reason: string | null;
@@ -16,6 +25,12 @@ const OUTCOME: Record<string, { label: string; color: string }> = {
   NOT_WORKED: { label: "効いてない", color: "text-problem" },
   NOT_DONE: { label: "未着手", color: "text-muted" },
   CONFIRMING: { label: "確認中", color: "text-warn" },
+};
+
+const ACTION_STATUS: Record<string, { label: string; color: string }> = {
+  OPEN: { label: "追跡中", color: "text-iris" },
+  DROPPED: { label: "打ち切り済", color: "text-muted" },
+  DONE: { label: "完了", color: "text-keep" },
 };
 
 function outcomeMeta(outcome: ActionOutcome | null) {
@@ -45,6 +60,76 @@ export function ReflectionPanel({
 }) {
   const run = runReflection.bind(null, teamId, retroId);
   const adopt = adoptProposedAction.bind(null, teamId, retroId);
+  const setOutcome = setEvaluationOutcome.bind(null, teamId, retroId);
+  const carryOver = carryOverAction.bind(null, teamId, retroId);
+  const drop = dropAction.bind(null, teamId, retroId);
+
+  const outcomeForm = (ev: Evaluation) => (
+    <form action={setOutcome} className="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="evaluationId" value={ev.evaluationId} />
+      <button type="submit" name="outcome" value="WORKED" className="btn btn-ghost btn-sm">
+        効いた
+      </button>
+      <button type="submit" name="outcome" value="NOT_WORKED" className="btn btn-ghost btn-sm">
+        効いてない
+      </button>
+      <button type="submit" name="outcome" value="NOT_DONE" className="btn btn-ghost btn-sm">
+        未着手
+      </button>
+    </form>
+  );
+
+  const overrideDetails = (ev: Evaluation) => (
+    <details className="mt-2">
+      <summary className="eyebrow cursor-pointer select-none">判定を変える</summary>
+      <div className="mt-2">{outcomeForm(ev)}</div>
+    </details>
+  );
+
+  function evaluationControls(ev: Evaluation) {
+    const status = ACTION_STATUS[ev.actionStatus];
+    // 確認中: outcome 未確定 → 3択を露出
+    if (ev.outcome === null) {
+      return (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="eyebrow">回答</span>
+          {outcomeForm(ev)}
+        </div>
+      );
+    }
+    // 効いた: 完了表示＋上書きのみ
+    if (ev.outcome === "WORKED") {
+      return (
+        <div className="mt-2">
+          <span className={`badge ${status.color}`}>{status.label}</span>
+          {overrideDetails(ev)}
+        </div>
+      );
+    }
+    // 効いてない / 未着手: 繰り越す・打ち切る＋上書き
+    return (
+      <div className="mt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`badge ${status.color}`}>{status.label}</span>
+          <form action={carryOver}>
+            <input type="hidden" name="actionId" value={ev.actionId} />
+            <button type="submit" className="btn btn-ghost btn-sm">
+              繰り越す
+            </button>
+          </form>
+          {ev.actionStatus !== "DROPPED" && (
+            <form action={drop}>
+              <input type="hidden" name="actionId" value={ev.actionId} />
+              <button type="submit" className="btn btn-ghost btn-sm">
+                打ち切る
+              </button>
+            </form>
+          )}
+        </div>
+        {overrideDetails(ev)}
+      </div>
+    );
+  }
 
   return (
     <section className="space-y-4">
@@ -83,6 +168,7 @@ export function ReflectionPanel({
                       {ev.question && (
                         <p className="mt-1 text-sm text-warn">? {ev.question}</p>
                       )}
+                      {evaluationControls(ev)}
                     </li>
                   );
                 })}

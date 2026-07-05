@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { NoteKind, Prisma } from "@prisma/client";
+import { NoteKind, Prisma, ActionOutcome } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
 import { reflect, llmModelLabel, type ReflectionInput } from "@/lib/llm/reflection";
@@ -98,6 +98,94 @@ export async function adoptProposedAction(
       sourceReflectionId: reflectionId,
       content,
     },
+  });
+  revalidateRetro(teamId, retroId);
+}
+
+// 効果判定を人間が確定・上書きする（AIの判定を人が承認/修正）
+export async function setEvaluationOutcome(
+  teamId: string,
+  retroId: string,
+  formData: FormData,
+) {
+  const user = await requireUser();
+
+  const evaluationId = String(formData.get("evaluationId") ?? "").trim();
+  const outcome = String(formData.get("outcome") ?? "").trim();
+  if (
+    outcome !== "WORKED" &&
+    outcome !== "NOT_WORKED" &&
+    outcome !== "NOT_DONE"
+  ) {
+    return;
+  }
+  if (!evaluationId) return;
+
+  await prisma.actionEvaluation.updateMany({
+    where: {
+      id: evaluationId,
+      evaluatedInRetrospectiveId: retroId,
+      evaluatedIn: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    data: {
+      outcome: outcome as ActionOutcome,
+      source: "HUMAN",
+      question: null,
+    },
+  });
+
+  // 対応するアクションの状態を同期（効いた→完了、それ以外→追跡中）
+  await prisma.action.updateMany({
+    where: {
+      evaluations: { some: { id: evaluationId } },
+      team: { memberships: { some: { userId: user.id } } },
+    },
+    data: { status: outcome === "WORKED" ? "DONE" : "OPEN" },
+  });
+
+  revalidateRetro(teamId, retroId);
+}
+
+// アクションを次回に持ち越す（OPENに戻す）
+export async function carryOverAction(
+  teamId: string,
+  retroId: string,
+  formData: FormData,
+) {
+  const user = await requireUser();
+
+  const actionId = String(formData.get("actionId") ?? "").trim();
+  if (!actionId) return;
+
+  await prisma.action.updateMany({
+    where: {
+      id: actionId,
+      teamId,
+      team: { memberships: { some: { userId: user.id } } },
+    },
+    data: { status: "OPEN" },
+  });
+  revalidateRetro(teamId, retroId);
+}
+
+// アクションを打ち切る（DROPPED）
+export async function dropAction(
+  teamId: string,
+  retroId: string,
+  formData: FormData,
+) {
+  const user = await requireUser();
+
+  const actionId = String(formData.get("actionId") ?? "").trim();
+  if (!actionId) return;
+
+  await prisma.action.updateMany({
+    where: {
+      id: actionId,
+      teamId,
+      team: { memberships: { some: { userId: user.id } } },
+    },
+    data: { status: "DROPPED" },
   });
   revalidateRetro(teamId, retroId);
 }
