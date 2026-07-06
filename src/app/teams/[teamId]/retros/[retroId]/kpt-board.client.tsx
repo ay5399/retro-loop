@@ -23,8 +23,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { addNote, updateNote, deleteNote, moveNote, setNoteColor } from "./actions";
+import { addNote, updateNote, deleteNote, moveNote, setNoteColor, toggleVote } from "./actions";
 import { NOTE_COLORS, type NoteColor } from "@/lib/note-colors";
+import { MAX_VOTES_PER_USER } from "@/lib/votes";
 
 type NoteKind = "KEEP" | "PROBLEM" | "TRY";
 
@@ -39,7 +40,15 @@ type NoteDTO = {
   hasVoted: boolean;
 };
 
-type Props = { teamId: string; retroId: string; notes: NoteDTO[] };
+type Props = {
+  teamId: string;
+  retroId: string;
+  notes: NoteDTO[];
+  votesUsed: number;
+};
+
+// 票用の軽い楽観状態: noteId -> 表示中の投票状態。
+type VoteState = { voted: boolean; count: number };
 
 type MoveAction = { noteId: string; toKind: NoteKind; toIndex: number };
 
@@ -79,7 +88,7 @@ function moveReducer(state: NoteDTO[], action: MoveAction): NoteDTO[] {
   return [...lanes.KEEP, ...lanes.PROBLEM, ...lanes.TRY];
 }
 
-export function KptBoardClient({ teamId, retroId, notes }: Props) {
+export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
   // サーバ props を真実源にする（useState を真実源にしない）。
   // 表示順はレーン内 order でソートした配列位置で表す。
   const baseNotes = useMemo(
@@ -94,6 +103,12 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
     Record<string, NoteColor | null>,
     { noteId: string; color: NoteColor | null }
   >({}, (state, action) => ({ ...state, [action.noteId]: action.color }));
+  // 投票専用の軽い楽観状態: noteId -> {voted, count}。
+  // color の colorOverrides と同型。base は空なので revalidate 後は props に収束する。
+  const [voteOverrides, applyVote] = useOptimistic<
+    Record<string, VoteState>,
+    { noteId: string; vote: VoteState }
+  >({}, (state, action) => ({ ...state, [action.noteId]: action.vote }));
   const [, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
   // ドラッグ中のライブな並び（レーンごとの id 配列）。ドラッグ中のみ非 null。
@@ -108,6 +123,20 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
     startTransition(async () => {
       applyColor({ noteId, color });
       await setNoteColor(teamId, retroId, noteId, color);
+    });
+  }
+
+  // 投票トグルを楽観適用してからサーバへ確定する。color/move と同じ作法で transition 内 await。
+  // current は表示中（楽観反映済み）の状態。反転して即時に見た目を更新する。
+  function handleToggleVote(noteId: string, current: VoteState) {
+    const nextVoted = !current.voted;
+    const vote: VoteState = {
+      voted: nextVoted,
+      count: current.count + (nextVoted ? 1 : -1),
+    };
+    startTransition(async () => {
+      applyVote({ noteId, vote });
+      await toggleVote(teamId, retroId, noteId);
     });
   }
 
@@ -141,10 +170,33 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
       const n = noteById.get(id);
       if (!n) continue;
       const color = id in colorOverrides ? colorOverrides[id] : n.color;
-      out.push({ ...n, kind, color });
+      const vote = id in voteOverrides ? voteOverrides[id] : null;
+      out.push({
+        ...n,
+        kind,
+        color,
+        voteCount: vote ? vote.count : n.voteCount,
+        hasVoted: vote ? vote.voted : n.hasVoted,
+      });
     }
     return out;
   }
+
+  // 現在の総投票数 = props(votesUsed) ＋ 楽観分の増減。
+  // 各上書きにつき、base(hasVoted) からの差分を加算する。
+  const votesUsedNow = useMemo(() => {
+    let total = votesUsed;
+    for (const id in voteOverrides) {
+      const base = noteById.get(id);
+      const was = base?.hasVoted ? 1 : 0;
+      const now = voteOverrides[id].voted ? 1 : 0;
+      total += now - was;
+    }
+    return total;
+  }, [votesUsed, voteOverrides, noteById]);
+
+  // 上限到達: これ以上、未投票の付箋へは投票できない（投票済みは取り消し可）。
+  const atVoteLimit = votesUsedNow >= MAX_VOTES_PER_USER;
 
   // id（レーン id でもノート id でも）から所属レーンを、ライブ並びを優先して解決する。
   function findContainer(id: string): NoteKind | null {
@@ -291,6 +343,8 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
             itemIds={effectiveLanes[col.kind]}
             notes={laneNotes(col.kind)}
             onSetColor={handleSetColor}
+            onToggleVote={handleToggleVote}
+            atVoteLimit={atVoteLimit}
           />
         ))}
       </div>
@@ -309,6 +363,8 @@ function Lane({
   itemIds,
   notes,
   onSetColor,
+  onToggleVote,
+  atVoteLimit,
 }: {
   teamId: string;
   retroId: string;
@@ -316,6 +372,8 @@ function Lane({
   itemIds: string[];
   notes: NoteDTO[];
   onSetColor: (noteId: string, color: NoteColor | null) => void;
+  onToggleVote: (noteId: string, current: VoteState) => void;
+  atVoteLimit: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.kind });
   const add = addNote.bind(null, teamId, retroId, column.kind);
@@ -342,6 +400,8 @@ function Lane({
               retroId={retroId}
               note={note}
               onSetColor={onSetColor}
+              onToggleVote={onToggleVote}
+              atVoteLimit={atVoteLimit}
             />
           ))}
           {notes.length === 0 && (
@@ -373,11 +433,15 @@ function SortableNote({
   retroId,
   note,
   onSetColor,
+  onToggleVote,
+  atVoteLimit,
 }: {
   teamId: string;
   retroId: string;
   note: NoteDTO;
   onSetColor: (noteId: string, color: NoteColor | null) => void;
+  onToggleVote: (noteId: string, current: VoteState) => void;
+  atVoteLimit: boolean;
 }) {
   const {
     attributes,
@@ -389,6 +453,14 @@ function SortableNote({
   } = useSortable({ id: note.id });
 
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // 未投票 かつ 上限到達 のときだけ投票不可（投票済みは常に取り消せる）。
+  const voteDisabled = atVoteLimit && !note.hasVoted;
+  const voteHint = voteDisabled
+    ? `投票上限（${MAX_VOTES_PER_USER}票）に達しています`
+    : note.hasVoted
+      ? "投票を取り消す"
+      : "投票する";
 
   // 色があればその CSS 変数を背景に敷く。null なら既定の bg-surface-2 のまま。
   const colored = note.color != null && note.color !== "";
@@ -423,6 +495,29 @@ function SortableNote({
         <div className="min-w-0 flex-1">
           <p className="whitespace-pre-wrap break-words">{note.content}</p>
           <div className="mt-2 flex items-center gap-3 text-xs text-muted">
+            <button
+              type="button"
+              onClick={() =>
+                onToggleVote(note.id, {
+                  voted: note.hasVoted,
+                  count: note.voteCount,
+                })
+              }
+              disabled={voteDisabled}
+              aria-pressed={note.hasVoted}
+              aria-label={voteHint}
+              title={voteHint}
+              data-vote-count={note.voteCount}
+              data-voted={note.hasVoted ? "true" : "false"}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                note.hasVoted
+                  ? "border-line-strong bg-surface-2 text-ink"
+                  : "border-line text-muted hover:text-ink"
+              }`}
+            >
+              <span aria-hidden>▲</span>
+              {note.voteCount}
+            </button>
             <details>
               <summary className="cursor-pointer hover:text-ink">編集</summary>
               <form

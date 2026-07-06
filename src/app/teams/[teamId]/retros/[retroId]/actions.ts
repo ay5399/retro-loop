@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
 import { reflect, llmModelLabel, type ReflectionInput } from "@/lib/llm/reflection";
 import { isNoteColor, type NoteColor } from "@/lib/note-colors";
+import { MAX_VOTES_PER_USER } from "@/lib/votes";
 
 // このふりかえりが、ログインユーザーが所属するチームのものか確認する
 async function assertRetroAccess(teamId: string, retroId: string, userId: string) {
@@ -291,6 +292,51 @@ export async function moveNote(
       }
     }
   });
+
+  revalidateRetro(teamId, retroId);
+}
+
+// 付箋への投票をトグルする（Phase 3）。
+// 既に投票済みなら取り消し、未投票ならこのふりかえり内の総票数が上限未満のときだけ投じる。
+export async function toggleVote(
+  teamId: string,
+  retroId: string,
+  noteId: string,
+): Promise<void> {
+  const user = await requireUser();
+  await assertRetroAccess(teamId, retroId, user.id);
+
+  // 対象付箋が当該ふりかえりのもので、かつ自チームか確認（メンバーシップ付き）
+  const note = await prisma.note.findFirst({
+    where: {
+      id: noteId,
+      retrospectiveId: retroId,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    select: { id: true },
+  });
+  if (!note) return;
+
+  const existing = await prisma.noteVote.findUnique({
+    where: { noteId_userId: { noteId, userId: user.id } },
+    select: { id: true },
+  });
+
+  if (existing) {
+    // 投票済み → 取り消し
+    await prisma.noteVote.delete({
+      where: { noteId_userId: { noteId, userId: user.id } },
+    });
+  } else {
+    // 未投票 → このふりかえり内の総票数が上限未満のときだけ投じる
+    const votesUsed = await prisma.noteVote.count({
+      where: { userId: user.id, note: { retrospectiveId: retroId } },
+    });
+    if (votesUsed >= MAX_VOTES_PER_USER) return; // 上限
+    await prisma.noteVote.create({
+      data: { noteId, userId: user.id },
+    });
+  }
 
   revalidateRetro(teamId, retroId);
 }

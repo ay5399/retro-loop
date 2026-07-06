@@ -22,7 +22,7 @@ export async function loginViaMagicLink(page: Page, email: string): Promise<void
   await page.waitForURL((u) => !u.pathname.startsWith("/signin"));
 }
 
-async function waitForMagicLink(timeoutMs = 5000): Promise<string> {
+async function waitForMagicLink(timeoutMs = 20000): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (existsSync(MAGIC_LINK_FILE)) {

@@ -44,6 +44,12 @@ export default async function RetrospectivePage({
     hasVoted: n.votes.some((v) => v.userId === user.id),
   }));
 
+  // このふりかえりで現在ユーザーが使った票数（取得済みの notes.votes から集計）
+  const votesUsed = retro.notes.reduce(
+    (sum, n) => sum + (n.votes.some((v) => v.userId === user.id) ? 1 : 0),
+    0,
+  );
+
   const latest = retro.reflections[0] ?? null;
   const parsed = latest ? ReflectionResultSchema.safeParse(latest.rawOutput) : null;
 
@@ -69,7 +75,7 @@ export default async function RetrospectivePage({
 
         <section className="space-y-3">
           <p className="eyebrow">KPT</p>
-          <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} />
+          <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} votesUsed={votesUsed} />
         </section>
 
         <ReflectionPanel

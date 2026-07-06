@@ -176,6 +176,119 @@ test("キーボードでレーンを跨いで移動でき永続化される", as
   await page.screenshot({ path: "e2e/__screens__/board.png", fullPage: true });
 });
 
+// 付箋の投票ボタン（data-voted 属性を持つのはこのボタンだけ＝一意）。
+// 実装: aria-pressed / data-vote-count / data-voted 付きの type=button、ラベルに「▲」を含む。
+function voteButton(page: Page, noteId: string) {
+  return page.locator(`[data-note-id="${noteId}"] button[data-voted]`);
+}
+
+test("付箋に投票でき、取消でき、永続化される（Phase 3）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+
+  const btn = voteButton(page, ids.keep1);
+  await expect(btn).toBeVisible();
+  // 初期は未投票・0票
+  await expect(btn).toHaveAttribute("data-voted", "false");
+  await expect(btn).toHaveAttribute("data-vote-count", "0");
+
+  // 投票する → 楽観反映で voted=true・count=1
+  await btn.click();
+  await expect(btn).toHaveAttribute("data-voted", "true");
+  await expect(btn).toHaveAttribute("data-vote-count", "1");
+
+  // DB: NoteVote(keep1, user) が 1 件（revalidate まで長めに待つ）
+  await expect(async () => {
+    const n = await prisma.noteVote.count({
+      where: { noteId: ids.keep1, userId },
+    });
+    expect(n).toBe(1);
+  }).toPass({ timeout: 40_000 });
+
+  // reload 後も投票状態が維持される（＝DB反映の実証）
+  await page.reload();
+  await expect(voteButton(page, ids.keep1)).toHaveAttribute("data-voted", "true");
+  await expect(voteButton(page, ids.keep1)).toHaveAttribute("data-vote-count", "1");
+
+  // もう一度クリックで取消 → voted=false・count=0
+  const btn2 = voteButton(page, ids.keep1);
+  await btn2.click();
+  await expect(btn2).toHaveAttribute("data-voted", "false");
+  await expect(btn2).toHaveAttribute("data-vote-count", "0");
+
+  // DB: 0 件
+  await expect(async () => {
+    const n = await prisma.noteVote.count({
+      where: { noteId: ids.keep1, userId },
+    });
+    expect(n).toBe(0);
+  }).toPass({ timeout: 40_000 });
+
+  // reload 後も取消状態が維持される
+  await page.reload();
+  await expect(voteButton(page, ids.keep1)).toHaveAttribute("data-voted", "false");
+  await expect(voteButton(page, ids.keep1)).toHaveAttribute("data-vote-count", "0");
+});
+
+test("1ユーザーの投票上限（5票）で未投票の付箋が無効化される（Phase 3）", async ({ page }) => {
+  // このテスト用に既知 content/kind/order の付箋を 6 枚追加する（seed 分とは別）。
+  const extraIds: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const n = await prisma.note.create({
+      data: {
+        retrospectiveId: retroId,
+        authorId: userId,
+        kind: "TRY",
+        content: `board-vote-limit-${i}`,
+        order: 10 + i,
+      },
+    });
+    extraIds.push(n.id);
+  }
+
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+
+  // 先頭 5 枚に 1 票ずつ投票する（各クリック後に voted=true を待って直列化）。
+  for (let i = 0; i < 5; i++) {
+    const btn = voteButton(page, extraIds[i]);
+    await expect(btn).toBeVisible();
+    await btn.click();
+    await expect(btn).toHaveAttribute("data-voted", "true");
+  }
+
+  // DB: 5 票投じられている（revalidate まで長めに待つ）
+  await expect(async () => {
+    const n = await prisma.noteVote.count({
+      where: { userId, note: { retrospectiveId: retroId } },
+    });
+    expect(n).toBe(5);
+  }).toPass({ timeout: 40_000 });
+
+  // 6 枚目（未投票）の投票ボタンは上限到達で無効化される
+  const sixth = voteButton(page, extraIds[5]);
+  await expect(sixth).toBeDisabled();
+  await expect(sixth).toHaveAttribute(
+    "title",
+    "投票上限（5票）に達しています",
+  );
+
+  // 投票済みの付箋は取消可能（無効化されていない）
+  const votedBtn = voteButton(page, extraIds[0]);
+  await expect(votedBtn).toBeEnabled();
+
+  // 取消すると上限が解け、6 枚目が再び有効になる（回帰確認）
+  await votedBtn.click();
+  await expect(votedBtn).toHaveAttribute("data-voted", "false");
+  await expect(sixth).toBeEnabled();
+
+  // 投票上限の状態でスクショ保存（取消前の状態を再現してから撮る）
+  await votedBtn.click();
+  await expect(votedBtn).toHaveAttribute("data-voted", "true");
+  await expect(sixth).toBeDisabled();
+  await page.screenshot({ path: "e2e/__screens__/board-vote.png", fullPage: true });
+});
+
 // 付箋の色ピッカーを開く（「色」トグル→スウォッチ/クリアが現れる）
 async function openColorPicker(page: Page, noteId: string) {
   await page
