@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signIn } from "@/auth";
 import { Wordmark } from "@/components/loop";
+import { SubmitButton } from "./submit-button";
 
 // ログイン画面：メールアドレスを入れてマジックリンクを送る
 export default function SignInPage() {
@@ -35,9 +36,7 @@ export default function SignInPage() {
             placeholder="you@example.com"
             className="field"
           />
-          <button type="submit" className="btn btn-primary w-full">
-            ログインリンクを送る
-          </button>
+          <SubmitButton />
         </form>
       </div>
     </main>

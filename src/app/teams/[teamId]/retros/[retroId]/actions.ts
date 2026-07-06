@@ -257,16 +257,20 @@ export async function moveNote(
       ...destNotes.slice(clampedIndex).map((n) => n.id),
     ];
 
-    // 0..n で連番を振り直す（対象付箋は kind も更新）
-    for (let i = 0; i < ordered.length; i++) {
-      const id = ordered[i];
-      await tx.note.update({
-        where: { id },
-        data: id === note.id ? { order: i, kind: toKind } : { order: i },
-      });
+    // 0..n で連番を振り直す（対象付箋は kind も更新）。
+    // ordered の全付箋は移動先レーン(toKind)に属するので kind を toKind に統一
+    // （既存分は不変、対象付箋のみ実質変化）。1 文の UPDATE にまとめて往復を削減。
+    if (ordered.length > 0) {
+      const orderCases = ordered.map((id, i) => Prisma.sql`WHEN ${id} THEN ${i}`);
+      await tx.$executeRaw`
+        UPDATE "Note"
+        SET "order" = CASE "id" ${Prisma.join(orderCases, " ")} END,
+            "kind" = ${toKind}::"NoteKind"
+        WHERE "id" IN (${Prisma.join(ordered)})
+      `;
     }
 
-    // レーンをまたいだ場合は元レーンも order を 0..n に詰め直す
+    // レーンをまたいだ場合は元レーンも order を 0..n に詰め直す（同じく 1 文に集約）
     if (fromKind !== toKind) {
       const fromNotes = await tx.note.findMany({
         where: {
@@ -277,8 +281,13 @@ export async function moveNote(
         orderBy: { order: "asc" },
         select: { id: true },
       });
-      for (let i = 0; i < fromNotes.length; i++) {
-        await tx.note.update({ where: { id: fromNotes[i].id }, data: { order: i } });
+      if (fromNotes.length > 0) {
+        const fromCases = fromNotes.map((n, i) => Prisma.sql`WHEN ${n.id} THEN ${i}`);
+        await tx.$executeRaw`
+          UPDATE "Note"
+          SET "order" = CASE "id" ${Prisma.join(fromCases, " ")} END
+          WHERE "id" IN (${Prisma.join(fromNotes.map((n) => n.id))})
+        `;
       }
     }
   });
