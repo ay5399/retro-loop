@@ -5,16 +5,19 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   closestCorners,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
+  arrayMove,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
@@ -93,14 +96,11 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
   >({}, (state, action) => ({ ...state, [action.noteId]: action.color }));
   const [, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
-
-  // 色の楽観上書きを適用した表示用ノート。並び(move)とは独立に色だけ差し替える。
-  const displayNotes = useMemo(
-    () =>
-      optimisticNotes.map((n) =>
-        n.id in colorOverrides ? { ...n, color: colorOverrides[n.id] } : n,
-      ),
-    [optimisticNotes, colorOverrides],
+  // ドラッグ中のライブな並び（レーンごとの id 配列）。ドラッグ中のみ非 null。
+  // onDragOver でコンテナ間移動を反映し、跨ぎでもドロップ前に見た目が対象レーンへ入る。
+  // ドロップ後は null に戻し、楽観状態(optimisticNotes)由来の laneItems に収束させる。
+  const [dragLanes, setDragLanes] = useState<Record<NoteKind, string[]> | null>(
+    null,
   );
 
   // 色変更を楽観適用してからサーバへ確定する。move と同じ作法で transition 内 await。
@@ -116,78 +116,170 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // レーン別のノート id リスト（SortableContext 用）。
+  // サーバ props(楽観 move 反映後)由来のレーン別 id リスト。確定後の真実源。
   const laneItems = useMemo(() => {
     const map: Record<NoteKind, string[]> = { KEEP: [], PROBLEM: [], TRY: [] };
     for (const n of optimisticNotes) map[n.kind].push(n.id);
     return map;
   }, [optimisticNotes]);
 
-  // over.id がレーン id でもノート id でも、その所属レーンを解決する。
-  const laneOf = (id: string): NoteKind | null => {
-    if (isKind(id)) return id;
-    const note = optimisticNotes.find((n) => n.id === id);
-    return note ? note.kind : null;
-  };
+  // 表示に使うレーン。ドラッグ中は dragLanes（ライブ）、それ以外は laneItems。
+  const effectiveLanes = dragLanes ?? laneItems;
 
-  const activeNote = activeId
-    ? optimisticNotes.find((n) => n.id === activeId) ?? null
-    : null;
+  // id -> ノート の索引（表示用の元データ）。
+  const noteById = useMemo(() => {
+    const m = new Map<string, NoteDTO>();
+    for (const n of optimisticNotes) m.set(n.id, n);
+    return m;
+  }, [optimisticNotes]);
+
+  // 指定レーンの表示ノート列を、effectiveLanes の並び＋色の楽観上書きで組み立てる。
+  // ドラッグ中に別レーンへ来たノートは kind をそのレーンに合わせる（data-lane と整合）。
+  function laneNotes(kind: NoteKind): NoteDTO[] {
+    const out: NoteDTO[] = [];
+    for (const id of effectiveLanes[kind]) {
+      const n = noteById.get(id);
+      if (!n) continue;
+      const color = id in colorOverrides ? colorOverrides[id] : n.color;
+      out.push({ ...n, kind, color });
+    }
+    return out;
+  }
+
+  // id（レーン id でもノート id でも）から所属レーンを、ライブ並びを優先して解決する。
+  function findContainer(id: string): NoteKind | null {
+    if (isKind(id)) return id;
+    const src = dragLanes ?? laneItems;
+    for (const k of KINDS) if (src[k].includes(id)) return k;
+    return null;
+  }
+
+  const cloneLanes = (src: Record<NoteKind, string[]>): Record<NoteKind, string[]> => ({
+    KEEP: [...src.KEEP],
+    PROBLEM: [...src.PROBLEM],
+    TRY: [...src.TRY],
+  });
+
+  const activeNote = activeId ? noteById.get(activeId) ?? null : null;
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
+    // ライブ並びの起点を現在の確定並びから初期化する。
+    setDragLanes(cloneLanes(laneItems));
+  }
+
+  // dnd-kit の multiple containers 例と同型。ドラッグ中に active を
+  // ホバー中のレーンへライブ移動し、跨ぎでもドロップ前にプレビュー（隙間）を出す。
+  // 同一レーン内の並べ替えは SortableContext のストラテジが視覚的に処理するため、
+  // ここではレーン跨ぎ（コンテナ間移動）のみを扱う。
+  function handleDragOver(event: DragOverEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const activeIdStr = String(active.id);
+    const overId = String(over.id);
+
+    const activeContainer = findContainer(activeIdStr);
+    const overContainer = findContainer(overId);
+    if (!activeContainer || !overContainer) return;
+    if (activeContainer === overContainer) return;
+
+    setDragLanes((prev) => {
+      const lanes = prev ? cloneLanes(prev) : cloneLanes(laneItems);
+      const activeItems = lanes[activeContainer];
+      const overItems = lanes[overContainer];
+      const overIndex = overItems.indexOf(overId);
+
+      let newIndex: number;
+      if (isKind(overId)) {
+        newIndex = overItems.length; // 空レーン/レーン枠 = 末尾
+      } else {
+        const translated = active.rect.current.translated;
+        const isBelow =
+          translated != null &&
+          translated.top > over.rect.top + over.rect.height / 2;
+        newIndex =
+          overIndex >= 0 ? overIndex + (isBelow ? 1 : 0) : overItems.length;
+      }
+
+      return {
+        ...lanes,
+        [activeContainer]: activeItems.filter((id) => id !== activeIdStr),
+        [overContainer]: [
+          ...overItems.slice(0, newIndex),
+          activeIdStr,
+          ...overItems.slice(newIndex),
+        ],
+      };
+    });
   }
 
   function handleDragEnd(event: DragEndEvent) {
-    setActiveId(null);
     const { active, over } = event;
-    if (!over) return;
-
+    setActiveId(null);
     const noteId = String(active.id);
-    const overId = String(over.id);
-    if (overId === noteId) return; // 自分自身へのドロップ=変化なし
-    const toKind = laneOf(overId);
-    if (!toKind) return;
-    const fromKind = laneOf(noteId);
 
-    // 対象レーンから active を除いた並びを基準に差し込み位置を求める。
-    const targetIds = laneItems[toKind].filter((id) => id !== noteId);
-    let toIndex: number;
-    if (isKind(overId)) {
-      toIndex = targetIds.length; // 空レーン/レーン枠へのドロップ = 末尾
-    } else {
-      const overPos = targetIds.indexOf(overId);
-      if (overPos === -1) {
-        toIndex = targetIds.length;
-      } else if (fromKind === toKind) {
-        // 同レーン内: 下方向(active が over より上にある)なら over の後ろへ差し込む
-        const fullLane = laneItems[toKind];
-        const draggingDown = fullLane.indexOf(noteId) < fullLane.indexOf(overId);
-        toIndex = draggingDown ? overPos + 1 : overPos;
-      } else {
-        toIndex = overPos; // レーン跨ぎ: over の手前へ
-      }
+    if (!over) {
+      setDragLanes(null);
+      return;
+    }
+    const overId = String(over.id);
+
+    // レーン跨ぎは onDragOver で dragLanes に反映済み。ここでは最終並びを確定する。
+    const lanes = dragLanes ?? laneItems;
+    const toKind = findContainer(overId) ?? findContainer(noteId);
+    if (!toKind) {
+      setDragLanes(null);
+      return;
     }
 
-    const fromIndex = laneItems[toKind].indexOf(noteId);
-    // 位置に変化が無ければ何もしない。
-    if (fromKind === toKind && fromIndex === toIndex) return;
+    let finalOrder = lanes[toKind];
+    const activeIndex = finalOrder.indexOf(noteId);
+    if (activeIndex === -1) {
+      setDragLanes(null);
+      return;
+    }
+    // 同一レーン内の最終位置は arrayMove で確定（上下方向は index 差で自然に決まる）。
+    if (!isKind(overId)) {
+      const overIndex = finalOrder.indexOf(overId);
+      if (overIndex !== -1 && overIndex !== activeIndex) {
+        finalOrder = arrayMove(finalOrder, activeIndex, overIndex);
+      }
+    }
+    const toIndex = finalOrder.indexOf(noteId);
+
+    // 元の確定並び(props 由来)と同じ位置なら永続化不要。
+    const originalKind = KINDS.find((k) => laneItems[k].includes(noteId)) ?? null;
+    const originalIndex = originalKind
+      ? laneItems[originalKind].indexOf(noteId)
+      : -1;
+    if (originalKind === toKind && originalIndex === toIndex) {
+      setDragLanes(null);
+      return;
+    }
 
     // 楽観更新をサーバ反映(revalidate)まで保持するため transition 内で await する。
-    // await しないと transition が即完了し、再描画が届くまで旧位置に戻ってちらつく。
+    // await しないと transition が即完了し、旧位置へ戻る"スナップバック"が出る。
+    // applyMove で optimisticNotes を更新するので、dragLanes を null に戻しても
+    // effectiveLanes(=laneItems) が確定並びに一致し、ちらつかない。
     startTransition(async () => {
       applyMove({ noteId, toKind, toIndex });
       await moveNote(teamId, retroId, { noteId, toKind, toIndex });
     });
+    setDragLanes(null);
   }
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveId(null)}
+      onDragCancel={() => {
+        setActiveId(null);
+        setDragLanes(null);
+      }}
     >
       <div className="grid gap-4 sm:grid-cols-3">
         {COLUMNS.map((col) => (
@@ -196,8 +288,8 @@ export function KptBoardClient({ teamId, retroId, notes }: Props) {
             teamId={teamId}
             retroId={retroId}
             column={col}
-            itemIds={laneItems[col.kind]}
-            notes={displayNotes.filter((n) => n.kind === col.kind)}
+            itemIds={effectiveLanes[col.kind]}
+            notes={laneNotes(col.kind)}
             onSetColor={handleSetColor}
           />
         ))}
@@ -368,7 +460,9 @@ function SortableNote({
           </div>
 
           {pickerOpen && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            // 不透明な surface 背景＋薄いボーダー・角丸・小さな影で、
+            // 着色済みカードの上でもスウォッチが常に surface 上に並ぶようにする。
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface p-2 shadow-sm">
               {NOTE_COLORS.map((key) => (
                 <button
                   key={key}
