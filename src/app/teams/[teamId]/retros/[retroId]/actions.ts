@@ -273,6 +273,12 @@ export async function moveNote(
 
     // レーンをまたいだ場合は元レーンも order を 0..n に詰め直す（同じく 1 文に集約）
     if (fromKind !== toKind) {
+      // グループはレーン(kind)内の概念。別レーンへ移った付箋はグループから離脱させる
+      await tx.note.update({
+        where: { id: note.id },
+        data: { groupId: null },
+      });
+
       const fromNotes = await tx.note.findMany({
         where: {
           retrospectiveId: retroId,
@@ -337,6 +343,93 @@ export async function toggleVote(
       data: { noteId, userId: user.id },
     });
   }
+
+  revalidateRetro(teamId, retroId);
+}
+
+// 付箋をグループ化する（Phase 4）。
+// 同一レーン(kind)内の2枚以上の付箋を1つの NoteGroup にまとめる。
+export async function createGroup(
+  teamId: string,
+  retroId: string,
+  input: { kind: NoteKind; noteIds: string[]; name?: string },
+): Promise<void> {
+  const user = await requireUser();
+  await assertRetroAccess(teamId, retroId, user.id);
+
+  // 2枚未満はグループにならない
+  if (input.noteIds.length < 2) return;
+
+  // 対象付箋が全て当該ふりかえり所属・同一 kind であることを確認（メンバーシップ付き）
+  const notes = await prisma.note.findMany({
+    where: {
+      id: { in: input.noteIds },
+      retrospectiveId: retroId,
+      kind: input.kind,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    select: { id: true },
+  });
+  // 件数不一致（別レーン/別ふりかえり/存在しないID混入）なら中止
+  if (notes.length !== input.noteIds.length) return;
+
+  const group = await prisma.noteGroup.create({
+    data: {
+      retrospectiveId: retroId,
+      kind: input.kind,
+      name: input.name ?? null,
+      order: 0,
+    },
+  });
+
+  await prisma.note.updateMany({
+    where: {
+      id: { in: input.noteIds },
+      retrospectiveId: retroId,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    data: { groupId: group.id },
+  });
+
+  revalidateRetro(teamId, retroId);
+}
+
+// グループ名を変更する
+export async function renameGroup(
+  teamId: string,
+  retroId: string,
+  groupId: string,
+  name: string,
+): Promise<void> {
+  const user = await requireUser();
+
+  await prisma.noteGroup.updateMany({
+    where: {
+      id: groupId,
+      retrospectiveId: retroId,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+    data: { name },
+  });
+
+  revalidateRetro(teamId, retroId);
+}
+
+// グループを解除する（NoteGroup を削除。Note.groupId は onDelete SetNull で自動的に null）
+export async function ungroup(
+  teamId: string,
+  retroId: string,
+  groupId: string,
+): Promise<void> {
+  const user = await requireUser();
+
+  await prisma.noteGroup.deleteMany({
+    where: {
+      id: groupId,
+      retrospectiveId: retroId,
+      retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } },
+    },
+  });
 
   revalidateRetro(teamId, retroId);
 }

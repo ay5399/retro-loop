@@ -37,6 +37,9 @@ test.beforeAll(async () => {
 
 // 各テストは既知レイアウトから始める: KEEP=[keep1(0), keep2(1)], PROBLEM=[prob1(0)], TRY=[]
 async function reseedNotes() {
+  // グループ化テストの残骸が noteGroup.count 検証を汚さないよう、付箋より先に掃除する。
+  // Note.groupId は onDelete SetNull なので順序は問わないが明示的に消す。
+  await prisma.noteGroup.deleteMany({ where: { retrospectiveId: retroId } });
   await prisma.note.deleteMany({ where: { retrospectiveId: retroId } });
   const keep1 = await prisma.note.create({
     data: { retrospectiveId: retroId, authorId: userId, kind: "KEEP", content: CONTENT.keep1, order: 0 },
@@ -57,6 +60,7 @@ test.beforeEach(async () => {
 });
 
 test.afterAll(async () => {
+  await prisma.noteGroup.deleteMany({ where: { retrospectiveId: retroId } });
   await prisma.note.deleteMany({ where: { retrospectiveId: retroId } });
   await prisma.team.deleteMany({ where: { name: TEAM_NAME } });
   await prisma.user.deleteMany({ where: { email: TEST_EMAIL } });
@@ -343,4 +347,171 @@ test("付箋の色を変更でき永続化される（Phase 2）", async ({ page
     const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
     expect(k1?.color).toBeNull();
   }).toPass({ timeout: 40_000 });
+});
+
+// ─────────────────────────────────────────────
+// 付箋のグルーピング（Phase 4）の実ブラウザ検証。
+// 選択チェックボックス→「まとめる」→ [data-group-id] 枠、リネーム、解除、レーン跨ぎ離脱。
+// ─────────────────────────────────────────────
+
+// 付箋の選択チェックボックス（グループ化対象の集合を作る）。aria-label「この付箋を選択」。
+function selectCheckbox(page: Page, noteId: string) {
+  return page.locator(`[data-select-note="${noteId}"]`);
+}
+
+// レーンヘッダの「まとめる」ボタン（同一レーンで2件以上選択時に出現）。
+function groupCreateButton(page: Page, kind: string) {
+  return page.locator(
+    `[data-group-action="create"][data-lane-group-kind="${kind}"]`,
+  );
+}
+
+// keep1/keep2 を選択してグループ化し、[data-group-id] 枠の出現を待つヘルパ。
+// 戻り値は DB 上の（＝UI に出た）groupId。
+async function groupKeeps(page: Page): Promise<string> {
+  await selectCheckbox(page, ids.keep1).check();
+  await selectCheckbox(page, ids.keep2).check();
+
+  const createBtn = groupCreateButton(page, "KEEP");
+  await expect(createBtn).toBeVisible();
+  await createBtn.click();
+
+  // revalidate 後にグループ枠が1つ現れる（初回サーバアクションのコールドコンパイルを見込み長め）。
+  const groupFrame = page.locator('[data-lane="KEEP"] [data-group-id]');
+  await expect(groupFrame).toHaveCount(1, { timeout: 40_000 });
+
+  const groupId = await groupFrame.getAttribute("data-group-id");
+  expect(groupId).toBeTruthy();
+  return groupId as string;
+}
+
+test("同一レーンの付箋を選択してグループ化でき永続化される（Phase 4）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+
+  const groupId = await groupKeeps(page);
+
+  // UI: グループ枠の中に keep1/keep2 が両方含まれる。
+  const frame = page.locator(`[data-group-id="${groupId}"]`);
+  await expect(frame.locator(`[data-note-id="${ids.keep1}"]`)).toBeVisible();
+  await expect(frame.locator(`[data-note-id="${ids.keep2}"]`)).toBeVisible();
+
+  // DB: keep1/keep2 の groupId が同一の非null、NoteGroup が1件。
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    const k2 = await prisma.note.findUnique({ where: { id: ids.keep2 } });
+    expect(k1?.groupId).not.toBeNull();
+    expect(k1?.groupId).toBe(k2?.groupId);
+    const groups = await prisma.noteGroup.count({
+      where: { retrospectiveId: retroId },
+    });
+    expect(groups).toBe(1);
+  }).toPass({ timeout: 40_000 });
+
+  // reload 後も維持（永続化＝DB反映の実証）。
+  await page.reload();
+  const frame2 = page.locator(`[data-group-id="${groupId}"]`);
+  await expect(frame2).toHaveCount(1);
+  await expect(frame2.locator(`[data-note-id="${ids.keep1}"]`)).toBeVisible();
+  await expect(frame2.locator(`[data-note-id="${ids.keep2}"]`)).toBeVisible();
+
+  // グループ表示のスクショ保存。
+  await page.screenshot({ path: "e2e/__screens__/board-group.png", fullPage: true });
+});
+
+test("グループ名をリネームでき永続化される（Phase 4）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+
+  const groupId = await groupKeeps(page);
+
+  const NAME = "デプロイ改善";
+  // グループ名 input に入力して確定（form submit）。実装はインライン form の onSubmit で renameGroup。
+  const input = page.locator(`[data-group-name="${groupId}"]`);
+  await expect(input).toBeVisible();
+  await input.fill(NAME);
+  await input.press("Enter");
+
+  // DB: NoteGroup.name が更新される。
+  await expect(async () => {
+    const g = await prisma.noteGroup.findUnique({ where: { id: groupId } });
+    expect(g?.name).toBe(NAME);
+  }).toPass({ timeout: 40_000 });
+
+  // reload 後も input に反映される（defaultValue が新しい name を採る）。
+  await page.reload();
+  await expect(page.locator(`[data-group-name="${groupId}"]`)).toHaveValue(NAME);
+});
+
+test("グループを解除でき永続化される（Phase 4）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+
+  const groupId = await groupKeeps(page);
+
+  // 「解除」ボタン（グループ枠内）をクリック。
+  await page
+    .locator(`[data-group-id="${groupId}"]`)
+    .getByRole("button", { name: "グループを解除" })
+    .click();
+
+  // UI: グループ枠が消える。
+  await expect(page.locator(`[data-group-id="${groupId}"]`)).toHaveCount(0, {
+    timeout: 40_000,
+  });
+
+  // DB: keep1/keep2 の groupId が null、NoteGroup 0件。
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    const k2 = await prisma.note.findUnique({ where: { id: ids.keep2 } });
+    expect(k1?.groupId).toBeNull();
+    expect(k2?.groupId).toBeNull();
+    const groups = await prisma.noteGroup.count({
+      where: { retrospectiveId: retroId },
+    });
+    expect(groups).toBe(0);
+  }).toPass({ timeout: 40_000 });
+
+  // keep1/keep2 はグループ外の通常表示として残る。
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+  await expect(noteInLane(page, "KEEP", ids.keep2)).toBeVisible();
+
+  // reload 後も解除が維持される。
+  await page.reload();
+  await expect(page.locator(`[data-lane="KEEP"] [data-group-id]`)).toHaveCount(0);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+});
+
+test("レーンを跨いで移動した付箋はグループから離脱する（Phase 4）", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+
+  const groupId = await groupKeeps(page);
+
+  // グループ化が DB に反映済みであることを確認してから移動する。
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    expect(k1?.groupId).toBe(groupId);
+  }).toPass({ timeout: 40_000 });
+
+  // keep1 を KEEP から右隣の PROBLEM レーンへキーボードで移動（レーン跨ぎ）。
+  await keyboardDrag(page, ids.keep1, ["ArrowRight"]);
+
+  // DB: keep1 は PROBLEM に移り、groupId が null になる（レーン跨ぎ離脱）。
+  // keep2 は KEEP に残る（グループ自体はまだ存在し得る）。
+  await expect(async () => {
+    const k1 = await prisma.note.findUnique({ where: { id: ids.keep1 } });
+    expect(k1?.kind).toBe("PROBLEM");
+    expect(k1?.groupId).toBeNull();
+  }).toPass({ timeout: 40_000 });
+
+  // UI: keep1 が PROBLEM レーンに存在し、グループ枠の外にある。
+  await expect(noteInLane(page, "PROBLEM", ids.keep1)).toBeVisible();
+  await expect(
+    page.locator(`[data-group-id="${groupId}"] [data-note-id="${ids.keep1}"]`),
+  ).toHaveCount(0);
 });

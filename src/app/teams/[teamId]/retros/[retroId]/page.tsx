@@ -26,6 +26,7 @@ export default async function RetrospectivePage({
       team: true,
       previous: true,
       notes: { orderBy: [{ kind: "asc" }, { order: "asc" }], include: { votes: true } },
+      noteGroups: true,
       reflections: { orderBy: { createdAt: "desc" }, take: 1 },
       actionEvaluations: { include: { action: true }, orderBy: { createdAt: "asc" } },
       createdActions: { orderBy: { createdAt: "desc" } },
@@ -42,6 +43,12 @@ export default async function RetrospectivePage({
     groupId: n.groupId,
     voteCount: n.votes.length,
     hasVoted: n.votes.some((v) => v.userId === user.id),
+  }));
+
+  const groups = retro.noteGroups.map((g) => ({
+    id: g.id,
+    kind: g.kind,
+    name: g.name,
   }));
 
   // このふりかえりで現在ユーザーが使った票数（取得済みの notes.votes から集計）
@@ -75,7 +82,7 @@ export default async function RetrospectivePage({
 
         <section className="space-y-3">
           <p className="eyebrow">KPT</p>
-          <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} votesUsed={votesUsed} />
+          <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} votesUsed={votesUsed} groups={groups} />
         </section>
 
         <ReflectionPanel

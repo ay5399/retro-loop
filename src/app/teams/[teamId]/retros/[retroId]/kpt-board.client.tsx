@@ -24,6 +24,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { addNote, updateNote, deleteNote, moveNote, setNoteColor, toggleVote } from "./actions";
+import { createGroup, renameGroup, ungroup } from "./actions";
 import { NOTE_COLORS, type NoteColor } from "@/lib/note-colors";
 import { MAX_VOTES_PER_USER } from "@/lib/votes";
 
@@ -40,11 +41,15 @@ type NoteDTO = {
   hasVoted: boolean;
 };
 
+// グループ（視覚的なまとまり）。Backend が渡す。付箋は Note.groupId でこれを参照する。
+type GroupDTO = { id: string; kind: NoteKind; name: string | null };
+
 type Props = {
   teamId: string;
   retroId: string;
   notes: NoteDTO[];
   votesUsed: number;
+  groups: GroupDTO[];
 };
 
 // 票用の軽い楽観状態: noteId -> 表示中の投票状態。
@@ -69,6 +74,30 @@ function isKind(value: string): value is NoteKind {
   return value === "KEEP" || value === "PROBLEM" || value === "TRY";
 }
 
+// レーン内 id 列を groupId でまとめる（同 group を隣接させる）。
+// - ungrouped(null) は元の位置のまま。
+// - group は初出位置にブロックを固め、そのメンバーを元順で並べる。
+// 全付箋が groupId=null のときは恒等（＝既存の並びをそのまま返す）なので、
+// グループ未使用時は move の並びに一切影響しない。
+function clusterByGroup(
+  ids: string[],
+  groupOf: (id: string) => string | null,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    const g = groupOf(id);
+    if (g == null) {
+      out.push(id);
+      continue;
+    }
+    if (seen.has(g)) continue; // このグループのブロックは初出時に一括で出す
+    seen.add(g);
+    for (const other of ids) if (groupOf(other) === g) out.push(other);
+  }
+  return out;
+}
+
 // 楽観状態のレデューサ。対象付箋を取り除き、指定レーンの toIndex に差し込む。
 // レーンごとの並びは配列順で表現するため、order フィールドではなく配列位置が真実。
 function moveReducer(state: NoteDTO[], action: MoveAction): NoteDTO[] {
@@ -88,7 +117,7 @@ function moveReducer(state: NoteDTO[], action: MoveAction): NoteDTO[] {
   return [...lanes.KEEP, ...lanes.PROBLEM, ...lanes.TRY];
 }
 
-export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
+export function KptBoardClient({ teamId, retroId, notes, votesUsed, groups }: Props) {
   // サーバ props を真実源にする（useState を真実源にしない）。
   // 表示順はレーン内 order でソートした配列位置で表す。
   const baseNotes = useMemo(
@@ -111,12 +140,21 @@ export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
   >({}, (state, action) => ({ ...state, [action.noteId]: action.vote }));
   const [, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
+  // グループ化の選択状態（クライアントのみ。楽観にはしない）。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // ドラッグ中のライブな並び（レーンごとの id 配列）。ドラッグ中のみ非 null。
   // onDragOver でコンテナ間移動を反映し、跨ぎでもドロップ前に見た目が対象レーンへ入る。
   // ドロップ後は null に戻し、楽観状態(optimisticNotes)由来の laneItems に収束させる。
   const [dragLanes, setDragLanes] = useState<Record<NoteKind, string[]> | null>(
     null,
   );
+
+  // グループ id -> メタ情報。ヘッダのグループ名表示に使う。
+  const groupById = useMemo(() => {
+    const m = new Map<string, GroupDTO>();
+    for (const g of groups) m.set(g.id, g);
+    return m;
+  }, [groups]);
 
   // 色変更を楽観適用してからサーバへ確定する。move と同じ作法で transition 内 await。
   function handleSetColor(noteId: string, color: NoteColor | null) {
@@ -140,6 +178,38 @@ export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
     });
   }
 
+  // 付箋の選択トグル（まとめる対象の集合を作る）。
+  function toggleSelect(noteId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  }
+
+  // 選択した付箋をグループ化する。楽観にはせず、サーバ確定→revalidate で反映する。
+  // 成功後に選択状態をクリアする。
+  function handleCreateGroup(kind: NoteKind, noteIds: string[]) {
+    if (noteIds.length < 2) return;
+    startTransition(async () => {
+      await createGroup(teamId, retroId, { kind, noteIds });
+      setSelectedIds(new Set());
+    });
+  }
+
+  function handleRenameGroup(groupId: string, name: string) {
+    startTransition(async () => {
+      await renameGroup(teamId, retroId, groupId, name);
+    });
+  }
+
+  function handleUngroup(groupId: string) {
+    startTransition(async () => {
+      await ungroup(teamId, retroId, groupId);
+    });
+  }
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -152,15 +222,27 @@ export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
     return map;
   }, [optimisticNotes]);
 
-  // 表示に使うレーン。ドラッグ中は dragLanes（ライブ）、それ以外は laneItems。
-  const effectiveLanes = dragLanes ?? laneItems;
-
   // id -> ノート の索引（表示用の元データ）。
   const noteById = useMemo(() => {
     const m = new Map<string, NoteDTO>();
     for (const n of optimisticNotes) m.set(n.id, n);
     return m;
   }, [optimisticNotes]);
+
+  // 表示に使うレーン。ドラッグ中は dragLanes（ライブ・クラスタリングしない）、
+  // 静止時は laneItems を groupId でまとめた並び。
+  // グループ未使用時 clusterByGroup は恒等なので、静止時の並びは既存と完全に一致する。
+  // move のロジック（findContainer / onDragOver / onDragEnd）は laneItems / dragLanes を
+  // 直接参照しており、この表示用クラスタリングには依存しない（＝ドラッグ挙動に影響しない）。
+  const effectiveLanes = useMemo(() => {
+    if (dragLanes) return dragLanes;
+    const groupOf = (id: string) => noteById.get(id)?.groupId ?? null;
+    return {
+      KEEP: clusterByGroup(laneItems.KEEP, groupOf),
+      PROBLEM: clusterByGroup(laneItems.PROBLEM, groupOf),
+      TRY: clusterByGroup(laneItems.TRY, groupOf),
+    } as Record<NoteKind, string[]>;
+  }, [dragLanes, laneItems, noteById]);
 
   // 指定レーンの表示ノート列を、effectiveLanes の並び＋色の楽観上書きで組み立てる。
   // ドラッグ中に別レーンへ来たノートは kind をそのレーンに合わせる（data-lane と整合）。
@@ -342,6 +424,12 @@ export function KptBoardClient({ teamId, retroId, notes, votesUsed }: Props) {
             column={col}
             itemIds={effectiveLanes[col.kind]}
             notes={laneNotes(col.kind)}
+            groupById={groupById}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onCreateGroup={handleCreateGroup}
+            onRenameGroup={handleRenameGroup}
+            onUngroup={handleUngroup}
             onSetColor={handleSetColor}
             onToggleVote={handleToggleVote}
             atVoteLimit={atVoteLimit}
@@ -362,6 +450,12 @@ function Lane({
   column,
   itemIds,
   notes,
+  groupById,
+  selectedIds,
+  onToggleSelect,
+  onCreateGroup,
+  onRenameGroup,
+  onUngroup,
   onSetColor,
   onToggleVote,
   atVoteLimit,
@@ -371,12 +465,42 @@ function Lane({
   column: { kind: NoteKind; label: string; hint: string; color: string };
   itemIds: string[];
   notes: NoteDTO[];
+  groupById: Map<string, GroupDTO>;
+  selectedIds: Set<string>;
+  onToggleSelect: (noteId: string) => void;
+  onCreateGroup: (kind: NoteKind, noteIds: string[]) => void;
+  onRenameGroup: (groupId: string, name: string) => void;
+  onUngroup: (groupId: string) => void;
   onSetColor: (noteId: string, color: NoteColor | null) => void;
   onToggleVote: (noteId: string, current: VoteState) => void;
   atVoteLimit: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.kind });
   const add = addNote.bind(null, teamId, retroId, column.kind);
+
+  // このレーン内で選択中の付箋（2件以上で「まとめる」を出す）。
+  const selectedInLane = notes.filter((n) => selectedIds.has(n.id)).map((n) => n.id);
+
+  // 表示ノートを groupId の連続ブロックに畳む。notes は effectiveLanes 由来で
+  // 同 group が既に隣接済みなので、隣接連続だけ見ればブロックを復元できる。
+  type Block =
+    | { type: "note"; note: NoteDTO }
+    | { type: "group"; groupId: string; notes: NoteDTO[] };
+  const blocks: Block[] = [];
+  for (let i = 0; i < notes.length; ) {
+    const gid = notes[i].groupId;
+    if (gid == null) {
+      blocks.push({ type: "note", note: notes[i] });
+      i++;
+      continue;
+    }
+    const members: NoteDTO[] = [];
+    while (i < notes.length && notes[i].groupId === gid) {
+      members.push(notes[i]);
+      i++;
+    }
+    blocks.push({ type: "group", groupId: gid, notes: members });
+  }
 
   return (
     <section
@@ -386,24 +510,71 @@ function Lane({
         isOver ? "border-line-strong" : ""
       }`}
     >
-      <header className="flex items-baseline justify-between">
+      <header className="flex items-baseline justify-between gap-2">
         <span className={`badge ${column.color}`}>{column.label}</span>
-        <span className="text-xs text-muted">{column.hint}</span>
+        {selectedInLane.length >= 2 ? (
+          <button
+            type="button"
+            data-group-action="create"
+            data-lane-group-kind={column.kind}
+            aria-label="選択した付箋をまとめる"
+            onClick={() => onCreateGroup(column.kind, selectedInLane)}
+            className="btn btn-ghost btn-sm"
+          >
+            まとめる（{selectedInLane.length}）
+          </button>
+        ) : (
+          <span className="text-xs text-muted">{column.hint}</span>
+        )}
       </header>
 
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
         <ul className="flex flex-col gap-2">
-          {notes.map((note) => (
-            <SortableNote
-              key={note.id}
-              teamId={teamId}
-              retroId={retroId}
-              note={note}
-              onSetColor={onSetColor}
-              onToggleVote={onToggleVote}
-              atVoteLimit={atVoteLimit}
-            />
-          ))}
+          {blocks.map((block) =>
+            block.type === "note" ? (
+              <SortableNote
+                key={block.note.id}
+                teamId={teamId}
+                retroId={retroId}
+                note={block.note}
+                selected={selectedIds.has(block.note.id)}
+                onToggleSelect={onToggleSelect}
+                onSetColor={onSetColor}
+                onToggleVote={onToggleVote}
+                atVoteLimit={atVoteLimit}
+              />
+            ) : (
+              <li key={block.groupId} className="list-none">
+                <div
+                  data-group-id={block.groupId}
+                  className="flex flex-col gap-2 rounded-lg border border-line-strong border-l-4 bg-surface p-2"
+                >
+                  <GroupHeader
+                    groupId={block.groupId}
+                    name={groupById.get(block.groupId)?.name ?? null}
+                    count={block.notes.length}
+                    onRename={onRenameGroup}
+                    onUngroup={onUngroup}
+                  />
+                  <ul className="flex flex-col gap-2">
+                    {block.notes.map((note) => (
+                      <SortableNote
+                        key={note.id}
+                        teamId={teamId}
+                        retroId={retroId}
+                        note={note}
+                        selected={selectedIds.has(note.id)}
+                        onToggleSelect={onToggleSelect}
+                        onSetColor={onSetColor}
+                        onToggleVote={onToggleVote}
+                        atVoteLimit={atVoteLimit}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              </li>
+            ),
+          )}
           {notes.length === 0 && (
             <li className="rounded-lg border border-dashed border-line px-2 py-3 text-center text-xs text-muted">
               まだありません
@@ -428,10 +599,70 @@ function Lane({
   );
 }
 
+// グループのヘッダ。グループ名のインライン編集（renameGroup）と解除（ungroup）。
+function GroupHeader({
+  groupId,
+  name,
+  count,
+  onRename,
+  onUngroup,
+}: {
+  groupId: string;
+  name: string | null;
+  count: number;
+  onRename: (groupId: string, name: string) => void;
+  onUngroup: (groupId: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const input = e.currentTarget.elements.namedItem(
+            "name",
+          ) as HTMLInputElement | null;
+          onRename(groupId, (input?.value ?? "").trim());
+        }}
+        className="flex min-w-0 flex-1 items-center gap-1"
+      >
+        {/* key に name を混ぜ、revalidate 後の新しい name を defaultValue に反映する */}
+        <input
+          key={name ?? ""}
+          name="name"
+          defaultValue={name ?? ""}
+          placeholder="グループ名"
+          aria-label="グループ名"
+          data-group-name={groupId}
+          className="field min-w-0 flex-1 py-1 text-xs font-medium"
+        />
+        <button
+          type="submit"
+          data-group-action="rename"
+          className="btn btn-ghost btn-sm shrink-0"
+        >
+          保存
+        </button>
+      </form>
+      <span className="shrink-0 text-xs text-muted">{count}枚</span>
+      <button
+        type="button"
+        data-group-action="ungroup"
+        aria-label="グループを解除"
+        onClick={() => onUngroup(groupId)}
+        className="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted hover:text-problem"
+      >
+        解除
+      </button>
+    </div>
+  );
+}
+
 function SortableNote({
   teamId,
   retroId,
   note,
+  selected,
+  onToggleSelect,
   onSetColor,
   onToggleVote,
   atVoteLimit,
@@ -439,6 +670,8 @@ function SortableNote({
   teamId: string;
   retroId: string;
   note: NoteDTO;
+  selected: boolean;
+  onToggleSelect: (noteId: string) => void;
   onSetColor: (noteId: string, color: NoteColor | null) => void;
   onToggleVote: (noteId: string, current: VoteState) => void;
   atVoteLimit: boolean;
@@ -477,11 +710,20 @@ function SortableNote({
       style={style}
       data-note-id={note.id}
       data-note-color={note.color ?? ""}
-      className={`rounded-lg border border-line p-2.5 text-sm ${
-        colored ? "" : "bg-surface-2"
-      }`}
+      className={`rounded-lg border p-2.5 text-sm ${
+        selected ? "border-line-strong ring-2 ring-line-strong" : "border-line"
+      } ${colored ? "" : "bg-surface-2"}`}
     >
       <div className="flex items-start gap-2">
+        {/* グループ化用の選択トグル。ドラッグとは独立（listeners は付けない）。 */}
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(note.id)}
+          aria-label="この付箋を選択"
+          data-select-note={note.id}
+          className="mt-1 h-4 w-4 shrink-0 cursor-pointer"
+        />
         {/* ドラッグはこのハンドルに限定。listeners/attributes をここだけに付与。 */}
         <button
           type="button"
