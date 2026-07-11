@@ -7,6 +7,7 @@ import { LoopMark } from "@/components/loop";
 import { ReflectionResultSchema } from "@/lib/llm/reflection";
 import { KptBoardClient } from "./kpt-board.client";
 import { ReflectionPanel } from "./reflection-panel";
+import { AiChat } from "./ai-chat";
 
 export default async function RetrospectivePage({
   params,
@@ -83,6 +84,11 @@ export default async function RetrospectivePage({
         <section className="space-y-3">
           <p className="eyebrow">KPT</p>
           <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} votesUsed={votesUsed} groups={groups} />
+        </section>
+
+        <section className="w-full max-w-3xl space-y-3">
+          <p className="eyebrow">AIアシスタント</p>
+          <AiChat teamId={teamId} retroId={retroId} />
         </section>
 
         <div className="w-full max-w-3xl">
