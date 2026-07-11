@@ -415,7 +415,7 @@ export function KptBoardClient({ teamId, retroId, notes, votesUsed, groups }: Pr
         setDragLanes(null);
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-3 lg:gap-5 xl:gap-6">
         {COLUMNS.map((col) => (
           <Lane
             key={col.kind}

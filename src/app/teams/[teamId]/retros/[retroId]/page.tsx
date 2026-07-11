@@ -64,8 +64,8 @@ export default async function RetrospectivePage({
     <div className="flex min-h-screen flex-col">
       <AppHeader />
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-6 py-12">
-        <header className="space-y-2">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12 lg:px-8">
+        <header className="max-w-3xl space-y-2">
           <Link href={`/teams/${teamId}`} className="eyebrow hover:text-ink">
             ← {retro.team.name}
           </Link>
@@ -85,29 +85,31 @@ export default async function RetrospectivePage({
           <KptBoardClient teamId={teamId} retroId={retroId} notes={noteDtos} votesUsed={votesUsed} groups={groups} />
         </section>
 
-        <ReflectionPanel
-          teamId={teamId}
-          retroId={retroId}
-          hasRun={latest !== null}
-          model={latest?.model ?? null}
-          reflectionId={latest?.id ?? null}
-          evaluations={retro.actionEvaluations.map((ev) => ({
-            evaluationId: ev.id,
-            actionId: ev.actionId,
-            actionStatus: ev.action.status,
-            actionContent: ev.action.content,
-            outcome: ev.outcome,
-            reason: ev.reason,
-            question: ev.question,
-          }))}
-          probes={parsed?.success ? parsed.data.probes : []}
-          proposedActions={parsed?.success ? parsed.data.proposedActions : []}
-          adoptedActions={retro.createdActions.map((a) => ({
-            id: a.id,
-            content: a.content,
-            status: a.status,
-          }))}
-        />
+        <div className="w-full max-w-3xl">
+          <ReflectionPanel
+            teamId={teamId}
+            retroId={retroId}
+            hasRun={latest !== null}
+            model={latest?.model ?? null}
+            reflectionId={latest?.id ?? null}
+            evaluations={retro.actionEvaluations.map((ev) => ({
+              evaluationId: ev.id,
+              actionId: ev.actionId,
+              actionStatus: ev.action.status,
+              actionContent: ev.action.content,
+              outcome: ev.outcome,
+              reason: ev.reason,
+              question: ev.question,
+            }))}
+            probes={parsed?.success ? parsed.data.probes : []}
+            proposedActions={parsed?.success ? parsed.data.proposedActions : []}
+            adoptedActions={retro.createdActions.map((a) => ({
+              id: a.id,
+              content: a.content,
+              status: a.status,
+            }))}
+          />
+        </div>
       </main>
     </div>
   );
