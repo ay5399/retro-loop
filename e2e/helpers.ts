@@ -22,6 +22,18 @@ export async function loginViaMagicLink(page: Page, email: string): Promise<void
   await page.waitForURL((u) => !u.pathname.startsWith("/signin"));
 }
 
+/**
+ * 開発用ログイン（マジックリンク不要・パスワード不要）で即ログインする。
+ * /signin の「開発ログイン」フォームにメールを入れて送信するだけ。
+ * マジックリンクのコンパイル待ちが無いぶん高速で、テストの安定にも寄与する。
+ */
+export async function loginAsDev(page: Page, email: string): Promise<void> {
+  await page.goto("/signin");
+  await page.getByPlaceholder("dev@example.com").fill(email);
+  await page.getByRole("button", { name: "開発ログイン（リンク不要）" }).click();
+  await page.waitForURL((u) => !u.pathname.startsWith("/signin"));
+}
+
 async function waitForMagicLink(timeoutMs = 20000): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
