@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-helpers";
 import { AppHeader } from "@/components/app-header";
 import { createRetrospective } from "./actions";
+import { MembersSection } from "./members-section";
 
 export default async function TeamDetailPage({
   params,
@@ -18,11 +19,26 @@ export default async function TeamDetailPage({
     where: { id: teamId, memberships: { some: { userId: user.id } } },
     include: {
       retrospectives: { orderBy: { createdAt: "desc" } },
+      memberships: { include: { user: true } },
+      invitations: true,
     },
   });
   if (!team) notFound();
 
   const createRetroForTeam = createRetrospective.bind(null, teamId);
+
+  const members = team.memberships.map((m) => ({
+    id: m.user.id,
+    email: m.user.email,
+    name: m.user.name,
+  }));
+  const invitations = team.invitations.map((i) => ({
+    id: i.id,
+    email: i.email,
+    token: i.token,
+    expiresAt: i.expiresAt.toISOString(),
+  }));
+  const baseUrl = process.env.AUTH_URL ?? "http://localhost:3000";
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -60,6 +76,13 @@ export default async function TeamDetailPage({
             </ul>
           )}
         </section>
+
+        <MembersSection
+          teamId={teamId}
+          members={members}
+          invitations={invitations}
+          baseUrl={baseUrl}
+        />
 
         <section className="card space-y-3 p-5">
           <p className="eyebrow">New retrospective</p>

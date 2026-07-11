@@ -110,9 +110,23 @@ model Team {
   memberships    Membership[]
   retrospectives Retrospective[]
   actions        Action[]
+  invitations    Invitation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// チームへの招待。メールアドレス宛にトークン付き受諾リンクを送る。
+model Invitation {
+  id        String   @id @default(cuid())
+  teamId    String
+  email     String // 小文字化して保存
+  token     String   @unique @default(cuid())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
 }
 
 model Membership {
