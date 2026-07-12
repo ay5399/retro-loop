@@ -2,16 +2,27 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signIn } from "@/auth";
 import { Wordmark } from "@/components/loop";
+import { safeCallbackUrl } from "@/lib/safe-callback";
 import { SubmitButton } from "./submit-button";
 import { devSignIn } from "./dev-actions";
 
 // ログイン画面：メールアドレスを入れてマジックリンクを送る
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  const { callbackUrl: rawCallback } = await searchParams;
+  // ログイン後の戻り先（招待ページ等）。外部誘導を防ぐため相対パスのみ許可。
+  const callbackUrl = safeCallbackUrl(rawCallback);
+
   async function sendMagicLink(formData: FormData) {
     "use server";
     const email = String(formData.get("email") ?? "").trim();
-    // メール送信のみ行い（redirect:false）、自前の確認画面へ遷移する
-    await signIn("resend", { email, redirect: false, redirectTo: "/" });
+    const dest = safeCallbackUrl(String(formData.get("callbackUrl") ?? ""));
+    // メール送信のみ行い（redirect:false）、自前の確認画面へ遷移する。
+    // マジックリンク自体に戻り先(redirectTo)を埋め込むので、クリック後 dest に着地する。
+    await signIn("resend", { email, redirect: false, redirectTo: dest });
     redirect("/signin/verify");
   }
 
@@ -29,6 +40,7 @@ export default function SignInPage() {
         </p>
 
         <form action={sendMagicLink} className="mt-6 space-y-3">
+          <input type="hidden" name="callbackUrl" value={callbackUrl} />
           <input
             type="email"
             name="email"
@@ -48,6 +60,7 @@ export default function SignInPage() {
             開発用：メールアドレスだけでリンクもパスワードもなしに即ログインします。
           </p>
           <form action={devSignIn} className="mt-4 space-y-3">
+            <input type="hidden" name="callbackUrl" value={callbackUrl} />
             <input
               type="email"
               name="email"

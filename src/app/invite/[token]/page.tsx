@@ -1,16 +1,24 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { Wordmark } from "@/components/loop";
 import { acceptInvitation } from "@/app/teams/[teamId]/actions";
 
 // 招待受諾ページ。参加ボタンの submit で acceptInvitation を実行する。
-// 未ログインの場合は acceptInvitation 内の requireUser が /signin?callbackUrl=...
-// へリダイレクトするため、このページ自体はログイン済み前提で描画してよい。
+// 未ログインならログイン後にこのページへ戻すため、callbackUrl 付きで /signin へ誘導する。
 export default async function InviteAcceptPage({
   params,
 }: {
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+
+  // 未ログインなら、ログイン後にこの招待ページへ戻す
+  const session = await auth();
+  if (!session?.user?.id) {
+    const callbackUrl = encodeURIComponent(`/invite/${token}`);
+    redirect(`/signin?callbackUrl=${callbackUrl}`);
+  }
 
   async function accept() {
     "use server";

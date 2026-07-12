@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { safeCallbackUrl } from "@/lib/safe-callback";
 
 // 開発専用：メールアドレスだけで即ログインする（マジックリンク不要・パスワード不要）。
 // 本番では絶対に動かさない。DBセッション方式(strategy:"database")なので、
@@ -19,6 +20,8 @@ export async function devSignIn(formData: FormData) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     redirect("/signin");
   }
+  // ログイン後の戻り先（招待ページ等）。外部誘導を防ぐため相対パスのみ許可。
+  const dest = safeCallbackUrl(String(formData.get("callbackUrl") ?? ""));
 
   // User を用意（無ければ作る）。マジックリンク経由と同じく emailVerified を立てておく。
   const user = await prisma.user.upsert({
@@ -43,5 +46,5 @@ export async function devSignIn(formData: FormData) {
     expires,
   });
 
-  redirect("/teams");
+  redirect(dest);
 }
