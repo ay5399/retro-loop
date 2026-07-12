@@ -32,9 +32,10 @@ model User {
   sessions      Session[]
 
   // ドメイン関連
-  memberships Membership[]
-  notes       Note[] // 書いた付箋
-  noteVotes   NoteVote[]
+  memberships  Membership[]
+  notes        Note[] // 書いた付箋
+  noteVotes    NoteVote[]
+  joinRequests JoinRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -107,26 +108,42 @@ model Team {
   id   String @id @default(cuid())
   name String
 
+  // 参加リンク：固定URLで公募する。漏洩時は再生成(joinToken更新)できる。
+  joinToken    String  @unique @default(cuid())
+  // 参加リンク経由の参加に承認を要するか。false ならリンクを踏むだけで即参加。
+  joinApproval Boolean @default(true)
+
   memberships    Membership[]
   retrospectives Retrospective[]
   actions        Action[]
-  invitations    Invitation[]
+  joinRequests   JoinRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-/// チームへの招待。メールアドレス宛にトークン付き受諾リンクを送る。
-model Invitation {
-  id        String   @id @default(cuid())
-  teamId    String
-  email     String // 小文字化して保存
-  token     String   @unique @default(cuid())
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+enum JoinRequestStatus {
+  PENDING // 承認待ち
+  APPROVED // 承認済み（Membership化済み）
+  REJECTED // 却下
+}
 
-  @@index([teamId])
+/// 参加リンク経由の参加申請。承認制(joinApproval=true)のチームで使う。
+/// 1ユーザー1チームにつき1件（再申請は同じ行のstatusを更新）。
+model JoinRequest {
+  id     String            @id @default(cuid())
+  teamId String
+  userId String
+  status JoinRequestStatus @default(PENDING)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, userId])
+  @@index([teamId, status])
 }
 
 model Membership {

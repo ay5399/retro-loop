@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 
-// 招待リンクをクリップボードにコピーする小さなボタン。
-// Resend のメールが届かない相手にも、このリンクを手渡しで招待できる。
+// 参加リンクをクリップボードにコピーする小さなボタン。
 export function CopyLinkButton({ link }: { link: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -22,7 +21,7 @@ export function CopyLinkButton({ link }: { link: string }) {
     <button
       type="button"
       onClick={copy}
-      data-invite-link={link}
+      data-join-link={link}
       className="btn btn-ghost btn-sm shrink-0"
     >
       {copied ? "コピーしました" : "リンクをコピー"}

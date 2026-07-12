@@ -20,7 +20,11 @@ export default async function TeamDetailPage({
     include: {
       retrospectives: { orderBy: { createdAt: "desc" } },
       memberships: { include: { user: true } },
-      invitations: true,
+      joinRequests: {
+        where: { status: "PENDING" },
+        include: { user: true },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
   if (!team) notFound();
@@ -32,11 +36,10 @@ export default async function TeamDetailPage({
     email: m.user.email,
     name: m.user.name,
   }));
-  const invitations = team.invitations.map((i) => ({
-    id: i.id,
-    email: i.email,
-    token: i.token,
-    expiresAt: i.expiresAt.toISOString(),
+  const pendingRequests = team.joinRequests.map((r) => ({
+    id: r.id,
+    name: r.user.name,
+    email: r.user.email,
   }));
   const baseUrl = process.env.AUTH_URL ?? "http://localhost:3000";
 
@@ -80,7 +83,9 @@ export default async function TeamDetailPage({
         <MembersSection
           teamId={teamId}
           members={members}
-          invitations={invitations}
+          pendingRequests={pendingRequests}
+          joinToken={team.joinToken}
+          joinApproval={team.joinApproval}
           baseUrl={baseUrl}
         />
 
