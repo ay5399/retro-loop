@@ -47,7 +47,7 @@ export default async function TeamDetailPage({
     <div className="flex min-h-screen flex-col">
       <AppHeader />
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-6 py-12">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-12 px-6 py-12">
         <header className="space-y-2">
           <Link href="/teams" className="eyebrow hover:text-ink">
             ← Teams
@@ -55,11 +55,16 @@ export default async function TeamDetailPage({
           <h1 className="font-display text-2xl font-semibold">{team.name}</h1>
         </header>
 
-        <section className="space-y-3">
-          <p className="eyebrow">Retrospectives</p>
+        {/* ── ふりかえり（一覧＋作成をひとまとめ） ── */}
+        <section className="space-y-4">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-display text-lg font-semibold">ふりかえり</h2>
+            <span className="eyebrow">Retrospectives</span>
+          </div>
+
           {team.retrospectives.length === 0 ? (
             <p className="card p-6 text-sm text-muted">
-              まだふりかえりがありません。下から作成してください。
+              まだふりかえりがありません。下のフォームから作成してください。
             </p>
           ) : (
             <ul className="card divide-y divide-line overflow-hidden">
@@ -78,8 +83,28 @@ export default async function TeamDetailPage({
               ))}
             </ul>
           )}
+
+          <div className="card space-y-3 p-5">
+            <p className="eyebrow">New retrospective</p>
+            <form action={createRetroForTeam} className="flex gap-2">
+              <input
+                type="text"
+                name="name"
+                required
+                placeholder="例：Sprint 12 振り返り"
+                className="field"
+              />
+              <button type="submit" className="btn btn-primary shrink-0">
+                作成
+              </button>
+            </form>
+            <p className="text-xs text-muted">
+              直近のふりかえりが自動で「前回」として紐付き、効果追跡ループがつながります。
+            </p>
+          </div>
         </section>
 
+        {/* ── メンバー（一覧＋参加リンク＋申請をひとまとめ） ── */}
         <MembersSection
           teamId={teamId}
           members={members}
@@ -88,25 +113,6 @@ export default async function TeamDetailPage({
           joinApproval={team.joinApproval}
           baseUrl={baseUrl}
         />
-
-        <section className="card space-y-3 p-5">
-          <p className="eyebrow">New retrospective</p>
-          <form action={createRetroForTeam} className="flex gap-2">
-            <input
-              type="text"
-              name="name"
-              required
-              placeholder="例：Sprint 12 振り返り"
-              className="field"
-            />
-            <button type="submit" className="btn btn-primary shrink-0">
-              作成
-            </button>
-          </form>
-          <p className="text-xs text-muted">
-            直近のふりかえりが自動で「前回」として紐付き、効果追跡ループがつながります。
-          </p>
-        </section>
       </main>
     </div>
   );

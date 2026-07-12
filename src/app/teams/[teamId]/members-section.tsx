@@ -33,11 +33,19 @@ export function MembersSection({
   const joinLink = `${baseUrl}/join/${joinToken}`;
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-display text-lg font-semibold">メンバー</h2>
+        <span className="eyebrow">Members &amp; access</span>
+      </div>
+
       {/* メンバー一覧 */}
       <div className="card space-y-3 p-5">
         <p className="eyebrow">Members</p>
         <ul className="divide-y divide-line">
+          {members.length === 0 ? (
+            <li className="py-2 text-sm text-muted">メンバーがいません。</li>
+          ) : null}
           {members.map((member) => (
             <li
               key={member.id}
