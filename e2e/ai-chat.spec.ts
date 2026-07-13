@@ -59,7 +59,7 @@ async function assistantReplyReady(page: Page): Promise<boolean> {
   return t.length > 0 && t !== "…";
 }
 
-test("チャットUIが表示され、既存の問い返しパネルと併存する", async ({ page }) => {
+test("チャットUIが表示され、サジェストが出る（AIはチャットに一本化）", async ({ page }) => {
   await loginViaMagicLink(page, MEMBER_EMAIL);
   await page.goto(retroUrl());
 
@@ -68,12 +68,14 @@ test("チャットUIが表示され、既存の問い返しパネルと併存す
   await expect(page.locator("[data-chat-input]")).toBeVisible();
   await expect(page.locator("[data-chat-send]")).toBeVisible();
 
-  // 空状態のサジェスト
+  // 空状態のサジェスト（総括・横断指摘）
   await expect(page.getByRole("button", { name: "今回の総括をして" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "前回からの積み残しを指摘して" }),
+  ).toBeVisible();
 
-  // 既存の AI 問い返しパネルが併存（回帰なし）
-  await expect(page.getByText("AI 問い返し", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "AIに問い返してもらう" })).toBeVisible();
+  // 旧・AI問い返しパネルは撤去済み（チャットに一本化）
+  await expect(page.getByText("AI 問い返し", { exact: true })).toHaveCount(0);
 });
 
 test("送信するとアシスタントの返答が非空でストリーム表示される（実Gemini smoke）", async ({ page }) => {
