@@ -8,7 +8,17 @@ import { DefaultChatTransport } from "ai";
 // Vercel AI SDK の useChat と /api/chat を接続する。
 // - transport の body で retroId / teamId をサーバへ渡す（認可に使用）
 // - 入力状態は自前で管理し sendMessage({ text }) で送信（AI SDK v5+ の作法）
-const SUGGESTIONS = ["今回の総括をして", "改善のヒントをちょうだい", "次に試すべきことは?"];
+const SUGGESTIONS = [
+  "今回の総括をして",
+  "前回からの積み残しを指摘して",
+  "次に試すべきことは?",
+];
+
+// ツール名 → チャットに出す実行中ラベル
+const TOOL_LABELS: Record<string, string> = {
+  summarizeRetro: "今回の付箋を集計中…",
+  flagRecurringIssues: "前回までの積み残しを確認中…",
+};
 
 export function AiChat({ teamId, retroId }: { teamId: string; retroId: string }) {
   const [input, setInput] = useState("");
@@ -57,6 +67,12 @@ export function AiChat({ teamId, retroId }: { teamId: string; retroId: string })
                 .filter((p) => p.type === "text")
                 .map((p) => (p as { text: string }).text)
                 .join("");
+              // ツール呼び出し部分（type が "tool-<name>" / "dynamic-tool"）を拾う
+              const toolNames = m.parts
+                .filter(
+                  (p) => typeof p.type === "string" && p.type.startsWith("tool-"),
+                )
+                .map((p) => (p.type as string).replace(/^tool-/, ""));
               const isUser = m.role === "user";
               return (
                 <li
@@ -67,10 +83,23 @@ export function AiChat({ teamId, retroId }: { teamId: string; retroId: string })
                     className={
                       isUser
                         ? "max-w-[85%] rounded-2xl bg-iris px-4 py-2 text-sm text-iris-ink whitespace-pre-wrap"
-                        : "max-w-[85%] rounded-2xl bg-surface-2 px-4 py-2 text-sm whitespace-pre-wrap"
+                        : "max-w-[85%] space-y-1.5 rounded-2xl bg-surface-2 px-4 py-2 text-sm whitespace-pre-wrap"
                     }
                   >
-                    {text || (busy && !isUser ? "…" : "")}
+                    {!isUser && toolNames.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {toolNames.map((name, i) => (
+                          <p
+                            key={`${name}-${i}`}
+                            className="text-xs text-muted"
+                            data-tool-call={name}
+                          >
+                            🔧 {TOOL_LABELS[name] ?? name}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                    {text || (busy && !isUser && toolNames.length === 0 ? "…" : "")}
                   </div>
                 </li>
               );
