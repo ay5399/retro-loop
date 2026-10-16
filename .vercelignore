@@ -1,6 +1,7 @@
 # Vercel へのアップロードから除外（環境変数は Vercel の暗号化env を使う）
 .env
 .env.*
+!.env.example
 .magic-link.dev
 /e2e
 /test-results
