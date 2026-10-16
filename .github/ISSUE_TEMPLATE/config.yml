@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: セキュリティ上の問題
+    url: https://github.com/ay5399/retro-loop/security/advisories/new
+    about: 公開Issueにはせず、非公開で報告してください。

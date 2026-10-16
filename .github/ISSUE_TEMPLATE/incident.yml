@@ -1,0 +1,42 @@
+name: Production incident
+description: 本番障害を記録し、復旧時間と変更失敗率を計測する
+title: "[Incident]: "
+labels: ["type:incident"]
+body:
+  - type: input
+    id: started
+    attributes:
+      label: 発生日時
+      placeholder: "2026-10-15 14:30 JST"
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: ユーザー影響
+    validations:
+      required: true
+  - type: textarea
+    id: timeline
+    attributes:
+      label: タイムラインと対応
+    validations:
+      required: true
+  - type: input
+    id: related_deployment
+    attributes:
+      label: 関連デプロイ / PR
+      description: 原因となった可能性のあるPRやActions実行URLを記載します。
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 重大度
+      options: ["severity:critical", "severity:high", "severity:medium", "severity:low"]
+    validations:
+      required: true
+  - type: textarea
+    id: followups
+    attributes:
+      label: 恒久対応
+      placeholder: |
+        - [ ] #issue-number
