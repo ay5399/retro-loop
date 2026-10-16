@@ -54,10 +54,16 @@ npm run dev   # http://localhost:3000
 | コマンド | 内容 |
 |---|---|
 | `npm run dev` | 開発サーバ起動 |
+| `npm run check` | ESLint + TypeScript型検査 |
 | `npm run build` | `prisma generate` + 本番ビルド |
+| `npm run test:e2e` | Playwright E2Eテスト |
 | `npm run db:push` | スキーマを DB に反映（マイグレーション無し・開発向け） |
 | `npm run db:migrate` | マイグレーション作成・適用 |
 | `npm run db:studio` | Prisma Studio でデータ閲覧 |
+
+## 開発プロセスと計測
+
+Issue → Pull Request → CI → deploy の履歴を揃え、Apache DevLakeで開発フローを分析できるようにしています。作業規約は [`CONTRIBUTING.md`](CONTRIBUTING.md)、DevLakeとGitHubの初期設定・ラベル規約は [`docs/DEVLAKE.md`](docs/DEVLAKE.md) を参照してください。
 
 ## MVP スコープ
 

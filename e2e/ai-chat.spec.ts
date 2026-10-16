@@ -79,6 +79,7 @@ test("チャットUIが表示され、サジェストが出る（AIはチャッ�
 });
 
 test("送信するとアシスタントの返答が非空でストリーム表示される（実Gemini smoke）", async ({ page }) => {
+  test.skip(!process.env.GEMINI_API_KEY, "実APIを使うsmoke testにはGEMINI_API_KEYが必要です");
   // 初回ルートのcold compile＋ストリーミングで遅いのでテスト全体も長めに
   test.setTimeout(150_000);
 

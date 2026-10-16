@@ -1,0 +1,38 @@
+name: Bug
+description: 本番リリース前に見つかった不具合を登録する
+title: "[Bug]: "
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: 発生していること
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 重大度
+      options: ["severity:critical", "severity:high", "severity:medium", "severity:low"]
+      default: 2
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境・補足

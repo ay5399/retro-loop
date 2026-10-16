@@ -1,0 +1,36 @@
+name: Feature / improvement
+description: 新機能・改善要求を登録する
+title: "[Feature]: "
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい問題
+      description: 誰が、何に困っているかを記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 期待する成果
+      description: 実装方法ではなく、完了時に得られる価値を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 受け入れ条件
+      placeholder: |
+        - [ ] 条件1
+        - [ ] 条件2
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      options: ["P0", "P1", "P2", "P3"]
+      default: 2
+    validations:
+      required: true
