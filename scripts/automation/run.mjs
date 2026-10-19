@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, open, stat, readdir, cp, lstat, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { userInfo } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, requireReview, approvalMatches, reserve } from './core.mjs';
 
@@ -94,6 +95,12 @@ async function main() {
   }
   const actor = (await gh(['api', 'user', '--jq', '.login'])).trim();
   if (actor === policy.owner) throw new Error('Use a dedicated GitHub bot account for unattended work; the approver credential must not be available to this runner.');
+  if (userInfo().username.toLowerCase() === 'ay539') throw new Error('Use a dedicated Windows user for autonomous code generation, not the owner desktop user.');
+  const protection = (await api(`repos/${policy.repository}/rules/branches/main`)).flat();
+  if (!protection.some(r => r.type === 'pull_request') || !protection.some(r => r.type === 'required_status_checks')) throw new Error('main requires PR and status-check protection');
+  const environment = (await api(`repos/${policy.repository}/environments/production`)).flat()[0];
+  const branches = (await api(`repos/${policy.repository}/environments/production/deployment-branch-policies`)).flatMap(p => p.branch_policies ?? []);
+  if (!environment.deployment_branch_policy?.custom_branch_policies || branches.length !== 1 || branches[0].name !== 'main' || branches[0].type !== 'branch') throw new Error('Production environment must allow only the main branch');
   const incidents = JSON.parse(await gh(['issue', 'list', '--repo', policy.repository, '--state', 'open', '--label', 'type:incident', '--json', 'number']));
   if (incidents.length) throw new Error('Open production incident; owner investigation required before further releases.');
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Production halt is active; owner investigation required.');
@@ -200,6 +207,9 @@ async function develop(kind) {
     const staged = await git(['diff', '--cached'], dir);
     if (/(?:AIza[\w-]{25,}|sk-(?:ant-)?[\w-]{20,}|gh[pousr]_[\w]{20,})/.test(staged)) throw new Error('Possible secret in diff');
     if (/^\+.*(?:test\.(?:skip|fixme)|test\.describe\.skip)/m.test(staged) || (await git(['diff', '--cached', '--diff-filter=D', '--name-only'], dir)).split('\n').some(f => f.startsWith('e2e/'))) throw new Error('Weakening browser tests requires owner approval');
+    if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(staged)) throw new Error('New external calls or runtime credential access require owner approval');
+    const testDiff = await git(['diff', '--cached', '--', 'e2e'], dir);
+    if (/^-[^-].*(?:expect\(|assert\.|test\()/m.test(testDiff)) throw new Error('Removing test coverage requires owner approval');
     await git(['commit', '-m', `auto: ${result.title.replaceAll('\n', ' ').slice(0, 100)}`], dir);
     const sha = await git(['rev-parse', 'HEAD'], dir);
     // Review before publishing and executing the candidate in GitHub Actions.
@@ -264,6 +274,7 @@ async function release(dir, sha, pr, issue) {
   await git(['fetch', 'origin', 'main'], dir);
   const base = await git(['rev-parse', 'origin/main'], dir);
   if (info.baseRefOid !== base || await git(['merge-base', 'origin/main', 'HEAD'], dir) !== base) throw new Error('main advanced; review a refreshed branch');
+  if (deadline - Date.now() < 45 * 60_000) throw new Error('Insufficient time to merge, deploy and confirm rollback; leave reviewed PR unmerged');
   await gh(['pr', 'merge', String(pr), '--repo', policy.repository, '--squash', '--match-head-commit', sha]);
   const merged = JSON.parse(await gh(['pr', 'view', String(pr), '--repo', policy.repository, '--json', 'mergeCommit'])).mergeCommit.oid;
   await git(['fetch', 'origin', 'main'], dir);
@@ -281,11 +292,12 @@ async function release(dir, sha, pr, issue) {
     await gh(['run', 'watch', String(run.databaseId), '--repo', policy.repository, '--exit-status'], { timeout: 2_400_000 });
     await note(`本番反映・公開導線の確認が完了しました。\n\nCommit: ${merged}\nhttps://github.com/${policy.repository}/actions/runs/${run.databaseId}`, issue);
   } catch (error) {
+    // Persist uncertainty before attempting any API call, even after the deadline.
+    await save(path.join(stateDir, 'halt.json'), { run: run.databaseId, sha: merged, reason: 'Release verification was interrupted; owner must confirm final outcome' });
     const info = JSON.parse(await gh(['run', 'view', String(run.databaseId), '--repo', policy.repository, '--json', 'jobs']));
     const steps = info.jobs.flatMap(j => j.steps);
     if (steps.some(s => ['Deploy production artifact', 'Verify production'].includes(s.name) && s.conclusion === 'failure') && !steps.some(s => s.name === 'Rollback previous production' && s.conclusion === 'success')) {
       await save(path.join(stateDir, 'halt.json'), { run: run.databaseId, sha: merged, reason: 'Deployment failed and rollback was not confirmed' });
-      await gh(['variable', 'set', 'AUTOMATION_HALTED', '--repo', policy.repository, '--body', 'true']);
     }
     throw error;
   }

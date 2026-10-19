@@ -31,7 +31,6 @@ jobs:
       AUTOMATION_HALTED: ${{ vars.AUTOMATION_HALTED }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_TELEMETRY_DISABLED: '1'
     steps:
       - name: Validate release and wait for exact-SHA CI
@@ -69,22 +68,39 @@ jobs:
       - run: npm ci
       - name: Capture previous production
         id: previous
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: node scripts/automation/deployment.mjs previous
       - name: Pull Vercel environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: npx vercel@64.2.0 pull --yes --environment=production --token="$VERCEL_TOKEN"
       - name: Keep external calls disabled until separately audited
         run: |
-          printf '\nALLOW_LIVE_LLM="false"\nALLOW_LIVE_EMAIL="false"\n' >> .vercel/.env.production.local
+          cat > .vercel/.env.production.local <<'EOF'
+          DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build"
+          DIRECT_URL="postgresql://build:build@127.0.0.1:5432/build"
+          AUTH_SECRET="build-only-not-a-runtime-secret"
+          AUTH_URL="http://localhost:3000"
+          ALLOW_LIVE_LLM="false"
+          ALLOW_LIVE_EMAIL="false"
+          EOF
       - name: Build production artifact
-        run: npx vercel@64.2.0 build --prod --token="$VERCEL_TOKEN"
+        run: npx vercel@64.2.0 build --prod
       - name: Deploy production artifact
         id: deploy
-        run: npx vercel@64.2.0 deploy --prebuilt --prod --env ALLOW_LIVE_LLM=false --env ALLOW_LIVE_EMAIL=false --token="$VERCEL_TOKEN" > .deployment-url
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel@64.2.0 deploy --prebuilt --prod --env ALLOW_LIVE_LLM=false --env ALLOW_LIVE_EMAIL=false --env GEMINI_API_KEY= --env ANTHROPIC_API_KEY= --env AUTH_RESEND_KEY= --token="$VERCEL_TOKEN" > .deployment-url
       - name: Verify production
         id: verify
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: node scripts/automation/deployment.mjs verify
       - name: Rollback previous production
         id: rollback
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         if: ${{ failure() && steps.previous.outcome == 'success' && (steps.deploy.outcome == 'failure' || steps.verify.outcome == 'failure') }}
         run: npx vercel@64.2.0 rollback '${{ steps.previous.outputs.previous }}' --yes --token="$VERCEL_TOKEN" --timeout 60s
       - name: Record release incident

@@ -37,6 +37,8 @@ export function auditProblems(policy, audit, now = new Date()) {
     }
   }
   if (audit.autoRechargeDisabled !== true) errors.push('Automatic recharge / additional usage has not been verified disabled.');
+  if (audit.dedicatedWindowsUser !== true) errors.push('A dedicated Windows user with a separate credential store is required.');
+  if (audit.botHasNoVariableWrite !== true) errors.push('GitHub bot must not have Actions variable write permissions.');
   if (audit.productionLiveCallsDisabled !== true) errors.push('Production external-call gates have not been verified.');
   if (audit.rollbackLiveCallsDisabled !== true) errors.push('Rollback deployments must also have live API/email access disabled.');
   if (audit.vercelGitDeploymentsDisabled !== true) errors.push('Duplicate Vercel Git deployments have not been disabled.');
@@ -47,7 +49,7 @@ export function approvalMatches(comments, owner, id, sha) {
   return comments.some(c => c.user?.login === owner && c.body?.trim() === command);
 }
 export function changedPathsBlocked(paths, policy) {
-  return paths.filter(p => !/^(src\/|public\/|e2e\/|docs\/|README\.md$)/.test(p) || policy.protectedPaths.some(prefix => p.startsWith(prefix)));
+  return paths.filter(p => !/^(src\/|public\/|e2e\/|docs\/|README\.md$)/.test(p) || /(?:^|\/)(?:actions|route|middleware|proxy)\.[cm]?[jt]sx?$/.test(p) || p === 'src/lib/prisma.ts' || policy.protectedPaths.some(prefix => p.startsWith(prefix)));
 }
 export function requireReview(review, sha) {
   if (review.sha !== sha || review.verdict !== 'approve' || !review.reason?.trim()) throw new Error('Claude did not approve this exact commit.');

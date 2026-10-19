@@ -28,6 +28,8 @@ Get-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 無人実行のGitHub認証には**承認者と異なる専用ボットアカウント**が必要。所有者本人の認証のままでは実装・配信へ進まない。ボット作成や資格情報の発行・切替は自動では行わない。
 
+さらに、専用の標準Windowsユーザーと別の資格情報ストアで実行する。`workspace-write` は読み取りを全面的に隔離する機能ではないため、所有者デスクトップのユーザー `ay539` ではモデル実行へ進まない。ボットにはActions変数の書き込み権限を与えない。監査に `dedicatedWindowsUser=true`、`botHasNoVariableWrite=true` を含める。production環境がmainブランチのみを許可し、mainにPR必須・CI必須の保護があることもAPIで確認する。
+
 初期状態は**費用監査待ちで停止**する。認証済みCLIが存在することは課金設定の証明ではない。未確認の状態を自動で承認済みに書き換えない。
 
 ## 課金リスク一覧（2026-10-19調査）
@@ -83,6 +85,8 @@ Enable-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 Claude不賛成、テスト失敗、保護対象の変更、調査・画面証跡不足、レビュー後の差分変更は自動反映しない。配信はmain上の対象SHAのCI成功が必須。失敗時は直前本番へrollbackする。復旧できなければ `halt.json` とGitHub変数 `AUTOMATION_HALTED=true` で後続配信を止める。
 
 復旧後は所有者が実機確認し、ローカルのhalt.jsonを退避して、GitHub変数をfalseに戻す。定期処理自身は停止を解除しない。Vercel環境はロールバック先の設定も含め、課金が発生しない契約であることを開始前に確認する。
+
+未解決のIncident Issueがある間はworkflow自身も配信を拒否するため、PC側が終了しても次の配信は進まない。通常マージ前には配信・復旧監視用に45分の残り時間を必須とし、不足時はPRを未マージで残す。
 
 初回の安全な通し実行と本番配信は、費用監査を完了した後に実施する。それまでは定期タスクが起動しても前提条件の確認と停止理由の記録だけを行う。
 

@@ -7,6 +7,11 @@ export type { LlmProvider, StructuredRequest } from "./types";
 // LLM_PROVIDER 環境変数でプロバイダを選ぶ（既定 gemini）。
 // 差し替えたいときはここに case を足すだけ（例：claude）。
 export function getLlm(): LlmProvider {
+  if (process.env.LLM_PROVIDER === "mock") {
+    return { name: "mock", model: "mock", async generateJson() {
+      return JSON.stringify({ evaluations: [], probes: [], proposedActions: [] });
+    } };
+  }
   if (!externalServiceEnabled("llm")) throw new Error("AIは費用設定の確認待ちです。");
   const provider = process.env.LLM_PROVIDER ?? "gemini";
   switch (provider) {

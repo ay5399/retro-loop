@@ -33,7 +33,7 @@ test('unknown costs, paid usage, duplicates and accumulated reservations stop ex
 test('unverified/expired billing and changed policy stop execution', () => {
   assert.ok(auditProblems(policy, {}).length);
   const now = new Date('2026-10-19T04:00:00Z');
-  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelGitDeploymentsDisabled: true,
+  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelGitDeploymentsDisabled: true,
     services: Object.fromEntries(policy.services.map(s => [s, { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'provider settings checked' }])) };
   assert.deepEqual(auditProblems(policy, audit, now), []);
   assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
