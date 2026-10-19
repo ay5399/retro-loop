@@ -84,9 +84,11 @@ Enable-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 Claude不賛成、テスト失敗、保護対象の変更、調査・画面証跡不足、レビュー後の差分変更は自動反映しない。配信はmain上の対象SHAのCI成功が必須。失敗時は直前本番へrollbackする。復旧できなければ `halt.json` とGitHub変数 `AUTOMATION_HALTED=true` で後続配信を止める。
 
-復旧後は所有者が実機確認し、ローカルのhalt.jsonを退避して、GitHub変数をfalseに戻す。定期処理自身は停止を解除しない。Vercel環境はロールバック先の設定も含め、課金が発生しない契約であることを開始前に確認する。
+復旧後は所有者が実機確認し、ローカルのhalt.jsonを退避し、Incident Issueをcloseする。所有者が手動設定したAUTOMATION_HALTED変数があればfalseに戻す。ボット自身はActions変数を書き換えず、停止も解除しない。Vercel環境はロールバック先の設定も含め、課金が発生しない契約であることを開始前に確認する。
 
 未解決のIncident Issueがある間はworkflow自身も配信を拒否するため、PC側が終了しても次の配信は進まない。通常マージ前には配信・復旧監視用に45分の残り時間を必須とし、不足時はPRを未マージで残す。
+
+配信直前にRelease lease Issueへ復旧先を記録し、確認完了後にcloseする。中断・タイムアウト時は独立したRecover Interrupted Production workflowがleaseを読み、Incidentを開いて配信を止め、巻き戻しと公開導線の再確認を行う。本番は認証付き `/api/health` で対象SHA・外部呼び出し無効・実キー未設定を検証する。
 
 初回の安全な通し実行と本番配信は、費用監査を完了した後に実施する。それまでは定期タスクが起動しても前提条件の確認と停止理由の記録だけを行う。
 

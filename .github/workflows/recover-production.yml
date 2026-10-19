@@ -1,0 +1,67 @@
+name: Recover Interrupted Production
+on:
+  workflow_run:
+    workflows: ['Deploy Production']
+    types: [completed]
+permissions:
+  contents: read
+  issues: write
+jobs:
+  recover:
+    if: ${{ github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      FAILED_RUN: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Find interrupted release and block further deployments
+        id: lease
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
+            const lease = issues.find(i => i.title === `[Release lease] ${process.env.FAILED_RUN}` && i.user.login === 'github-actions[bot]');
+            if (!lease) { core.setOutput('recover', 'false'); return; }
+            const data = JSON.parse(lease.body);
+            if (String(data.runId) !== process.env.FAILED_RUN || !/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(data.previous)) throw new Error('Invalid recovery lease');
+            await github.rest.issues.create({ ...context.repo, title: '[Incident]: interrupted release requires recovery', labels: ['type:incident'], body: `Run: ${process.env.FAILED_RUN}\nRelease lease: #${lease.number}\nRecovery is running; further releases remain blocked until this incident is closed by the owner.` });
+            core.setOutput('recover', 'true'); core.setOutput('previous', data.previous); core.setOutput('issue', lease.number);
+      - uses: actions/checkout@v4
+        if: steps.lease.outputs.recover == 'true'
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.lease.outputs.recover == 'true'
+        with:
+          node-version-file: .nvmrc
+      - name: Check whether rollback already completed
+        id: restored
+        if: steps.lease.outputs.recover == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PREVIOUS: ${{ steps.lease.outputs.previous }}
+        run: node scripts/automation/deployment.mjs check-rollback
+      - name: Roll back interrupted production release
+        if: steps.lease.outputs.recover == 'true' && steps.restored.outputs.restored != 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PREVIOUS: ${{ steps.lease.outputs.previous }}
+        run: npx vercel@64.2.0 rollback "$PREVIOUS" --yes --token="$VERCEL_TOKEN" --timeout 60s
+      - name: Verify recovered production
+        if: steps.lease.outputs.recover == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PREVIOUS: ${{ steps.lease.outputs.previous }}
+        run: node scripts/automation/deployment.mjs verify-rollback
+      - name: Close recovered lease
+        if: steps.lease.outputs.recover == 'true'
+        uses: actions/github-script@v7
+        env:
+          LEASE: ${{ steps.lease.outputs.issue }}
+        with:
+          script: |
+            await github.rest.issues.update({ ...context.repo, issue_number: Number(process.env.LEASE), state: 'closed' });

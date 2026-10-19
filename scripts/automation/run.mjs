@@ -95,6 +95,13 @@ async function main() {
   }
   const actor = (await gh(['api', 'user', '--jq', '.login'])).trim();
   if (actor === policy.owner) throw new Error('Use a dedicated GitHub bot account for unattended work; the approver credential must not be available to this runner.');
+  const permission = (await api(`repos/${policy.repository}/collaborators/${actor}/permission`)).flat()[0];
+  if (permission.permission !== 'write' || permission.role_name !== 'write') throw new Error('GitHub bot requires write permission without admin/maintain privileges');
+  const rulesets = (await api(`repos/${policy.repository}/rulesets`)).flat();
+  for (const ruleset of rulesets) {
+    const detail = (await api(`repos/${policy.repository}/rulesets/${ruleset.id}`)).flat()[0];
+    if (detail.bypass_actors?.length) throw new Error('Autonomous repository rulesets must not have bypass actors');
+  }
   if (userInfo().username.toLowerCase() === 'ay539') throw new Error('Use a dedicated Windows user for autonomous code generation, not the owner desktop user.');
   const protection = (await api(`repos/${policy.repository}/rules/branches/main`)).flat();
   if (!protection.some(r => r.type === 'pull_request') || !protection.some(r => r.type === 'required_status_checks')) throw new Error('main requires PR and status-check protection');
@@ -103,6 +110,8 @@ async function main() {
   if (!environment.deployment_branch_policy?.custom_branch_policies || branches.length !== 1 || branches[0].name !== 'main' || branches[0].type !== 'branch') throw new Error('Production environment must allow only the main branch');
   const incidents = JSON.parse(await gh(['issue', 'list', '--repo', policy.repository, '--state', 'open', '--label', 'type:incident', '--json', 'number']));
   if (incidents.length) throw new Error('Open production incident; owner investigation required before further releases.');
+  const pendingIssues = (await api(`repos/${policy.repository}/issues?state=open&per_page=100`)).flat();
+  if (pendingIssues.some(i => i.title.startsWith('[Release lease] '))) throw new Error('An earlier deployment is awaiting verification or recovery');
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Production halt is active; owner investigation required.');
   const month = jstDate(now).slice(0, 7);
   const ledgerFile = path.join(stateDir, `ledger-${month}.json`);
@@ -205,6 +214,7 @@ async function develop(kind) {
     const blocked = changedPathsBlocked(files, policy);
     if (blocked.length) throw new Error(`Protected files changed: ${blocked.join(', ')}`);
     const staged = await git(['diff', '--cached'], dir);
+    if (/^\+[^+].*["']use server["']/m.test(staged)) throw new Error('New server actions require owner approval');
     if (/(?:AIza[\w-]{25,}|sk-(?:ant-)?[\w-]{20,}|gh[pousr]_[\w]{20,})/.test(staged)) throw new Error('Possible secret in diff');
     if (/^\+.*(?:test\.(?:skip|fixme)|test\.describe\.skip)/m.test(staged) || (await git(['diff', '--cached', '--diff-filter=D', '--name-only'], dir)).split('\n').some(f => f.startsWith('e2e/'))) throw new Error('Weakening browser tests requires owner approval');
     if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(staged)) throw new Error('New external calls or runtime credential access require owner approval');

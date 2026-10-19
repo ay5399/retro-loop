@@ -42,4 +42,5 @@ test('unverified/expired billing and changed policy stop execution', () => {
 test('autonomous edits cannot change policy, authentication, migrations or workflows', () => {
   assert.deepEqual(changedPathsBlocked(['src/components/loop.tsx', 'docs/UI_GUIDELINES.md'], policy), []);
   assert.equal(changedPathsBlocked(['automation/policy.json', 'src/auth.ts', '.github/workflows/ci.yml', 'prisma/schema.prisma', 'package.json'], policy).length, 5);
+  assert.equal(changedPathsBlocked(['CLAUDE.md', 'src/instrumentation.ts', 'src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/AUTONOMOUS_IMPROVEMENT.md'], policy).length, 5);
 });

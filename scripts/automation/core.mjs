@@ -49,7 +49,10 @@ export function approvalMatches(comments, owner, id, sha) {
   return comments.some(c => c.user?.login === owner && c.body?.trim() === command);
 }
 export function changedPathsBlocked(paths, policy) {
-  return paths.filter(p => !/^(src\/|public\/|e2e\/|docs\/|README\.md$)/.test(p) || /(?:^|\/)(?:actions|route|middleware|proxy)\.[cm]?[jt]sx?$/.test(p) || p === 'src/lib/prisma.ts' || policy.protectedPaths.some(prefix => p.startsWith(prefix)));
+  return paths.filter(original => {
+    const p = original.toLowerCase();
+    return !/^(src\/|public\/|e2e\/|docs\/|readme\.md$)/.test(p) || /(?:^|\/)(?:actions|route|middleware|proxy|instrumentation)\.[cm]?[jt]sx?$/.test(p) || ['src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/autonomous_improvement.md'].includes(p) || policy.protectedPaths.some(prefix => p.startsWith(prefix.toLowerCase()));
+  });
 }
 export function requireReview(review, sha) {
   if (review.sha !== sha || review.verdict !== 'approve' || !review.reason?.trim()) throw new Error('Claude did not approve this exact commit.');

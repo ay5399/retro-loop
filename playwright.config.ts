@@ -25,6 +25,6 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI && process.env.AUTOMATION_TEST !== "1",
     timeout: 120_000,
     // E2Eは決定論的に（＆無料枠を消費しないように）モックLLMで走らせる
-    env: { LLM_PROVIDER: "mock", AUTOMATION_TEST: "1", ALLOW_LIVE_LLM: "false", ALLOW_LIVE_EMAIL: "false", GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "", AUTH_RESEND_KEY: "" },
+    env: { LLM_PROVIDER: "mock", AUTOMATION_TEST: "1", ALLOW_LIVE_LLM: "false", ALLOW_LIVE_EMAIL: "false", GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "", AUTH_RESEND_KEY: "", GOOGLE_GENERATIVE_AI_API_KEY: "", HEALTHCHECK_TOKEN: "e2e-only-health-token", AUTOMATION_RELEASE_SHA: "e2e" },
   },
 });
