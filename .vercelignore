@@ -7,3 +7,5 @@
 /test-results
 /playwright-report
 /scripts
+/.automation-state
+/automation

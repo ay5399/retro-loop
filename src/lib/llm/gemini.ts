@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { LlmProvider, StructuredRequest } from "./types";
+import { externalServiceEnabled } from "@/lib/service-policy";
 
 // Gemini（Google AI Studio 無料枠）プロバイダ。
 // responseMimeType=application/json で JSON 出力を強制する。
@@ -10,6 +11,10 @@ export function geminiProvider(): LlmProvider {
     name: "gemini",
     model,
     async generateJson(req: StructuredRequest): Promise<string> {
+      if (!externalServiceEnabled("llm")) throw new Error("AIは費用設定の確認待ちです。");
+      if (req.prompt.length + (req.system?.length ?? 0) > 32_000) {
+        throw new Error("AIに送信する内容が長すぎます。");
+      }
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error(
@@ -24,6 +29,8 @@ export function geminiProvider(): LlmProvider {
         config: {
           systemInstruction: req.system,
           responseMimeType: "application/json",
+          maxOutputTokens: 2048,
+          httpOptions: { timeout: 30_000, retryOptions: { attempts: 1 } },
         },
       });
 

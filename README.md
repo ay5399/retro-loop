@@ -63,6 +63,8 @@ npm run dev   # http://localhost:3000
 
 ## 開発プロセスと計測
 
+毎日5時・13時・21時の自律改善と、3日に1度の承認制実験の運用は [`docs/AUTONOMOUS_IMPROVEMENT.md`](docs/AUTONOMOUS_IMPROVEMENT.md) を参照してください。初期状態は費用監査待ちで停止し、追加従量課金は無効です。
+
 Issue → Pull Request → CI → deploy の履歴を揃え、Apache DevLakeで開発フローを分析できるようにしています。作業規約は [`CONTRIBUTING.md`](CONTRIBUTING.md)、DevLakeとGitHubの初期設定・ラベル規約は [`docs/DEVLAKE.md`](docs/DEVLAKE.md) を参照してください。
 
 ## MVP スコープ

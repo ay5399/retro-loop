@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import Resend from "next-auth/providers/resend";
 import { prisma } from "@/lib/prisma";
+import { allowRequest, externalServiceEnabled } from "@/lib/service-policy";
 
 // RetroLoop の認証（Auth.js v5 / マジックリンク）
 // - DBに User/Session を保存する「データベースセッション」方式（Prismaアダプタ）
@@ -28,6 +29,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       apiKey: process.env.AUTH_RESEND_KEY,
       from: process.env.EMAIL_FROM ?? "onboarding@resend.dev",
       async sendVerificationRequest({ identifier: email, url, provider }) {
+        if (externalServiceEnabled("email") && !allowRequest(`email:${email.toLowerCase()}`, 3)) {
+          throw new Error("ログインリンクの送信回数が上限に達しました。1分後にお試しください。");
+        }
         // 開発中は必ずリンクをサーバのターミナルに出す（クリックすればログインできる）
         if (process.env.NODE_ENV !== "production") {
           console.log(
@@ -44,11 +48,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // Resend のキーが無ければ実メールは送らない（＝開発はターミナル出力で完結）
         const apiKey = provider.apiKey;
-        if (!apiKey) return;
+        if (!apiKey || !externalServiceEnabled("email")) {
+          if (process.env.NODE_ENV === "production") {
+            throw new Error("メール送信は費用設定の確認待ちです。");
+          }
+          return;
+        }
 
         const isDev = process.env.NODE_ENV !== "production";
         try {
           const res = await fetch("https://api.resend.com/emails", {
+            signal: AbortSignal.timeout(15_000),
             method: "POST",
             headers: {
               Authorization: `Bearer ${apiKey}`,

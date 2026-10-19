@@ -1,9 +1,10 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { convertToModelMessages, streamText, stepCountIs, tool, type UIMessage } from "ai";
+import { convertToModelMessages, streamText, stepCountIs, tool, createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildRetroSummary, buildRecurringIssues } from "@/lib/llm/retro-tools";
+import { allowRequest, externalServiceEnabled, isMockLlm } from "@/lib/service-policy";
 
 // ふりかえり画面のAIチャットアシスタント（ストリーミング）。
 // Vercel AI SDK（ai@7 / @ai-sdk/react の useChat）と接続する Route Handler。
@@ -18,13 +19,16 @@ export async function POST(req: Request) {
 
   let body: { messages?: UIMessage[]; retroId?: string; teamId?: string };
   try {
-    body = await req.json();
+    const text = await req.text();
+    if (text.length > 32_000) return new Response("送信内容が長すぎます。", { status: 413 });
+    body = JSON.parse(text);
+    if (!body || typeof body !== "object") return new Response("Bad Request", { status: 400 });
   } catch {
     return new Response("Bad Request", { status: 400 });
   }
 
   const { messages, retroId, teamId } = body;
-  if (!messages || !retroId || !teamId) {
+  if (!Array.isArray(messages) || messages.length > 30 || !retroId || !teamId) {
     return new Response("Bad Request", { status: 400 });
   }
 
@@ -41,6 +45,22 @@ export async function POST(req: Request) {
   });
   if (!retro) {
     return new Response("Forbidden", { status: 403 });
+  }
+
+  if (isMockLlm()) {
+    return createUIMessageStreamResponse({
+      stream: createUIMessageStream({ execute({ writer }) {
+        writer.write({ type: "text-start", id: "mock" });
+        writer.write({ type: "text-delta", id: "mock", delta: "今回の付箋を確認しました。次の一歩を一つ選び、次回のふりかえりで効果を確かめましょう。" });
+        writer.write({ type: "text-end", id: "mock" });
+      } }),
+    });
+  }
+  if (!externalServiceEnabled("llm")) {
+    return new Response("AIは費用設定の確認待ちです。", { status: 503 });
+  }
+  if (!allowRequest(`chat:${session.user.id}`, 5)) {
+    return new Response("AIの利用回数が上限に達しました。1分後にお試しください。", { status: 429 });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -64,12 +84,16 @@ export async function POST(req: Request) {
     "- summarizeRetro: 「今回の総括」「まとめて」等を求められたら使う。投票数の多い付箋を重視して要約する。",
     "- flagRecurringIssues: 「横断」「前回からの積み残し」「放置されてないか」「再発」等を問われたら使う。前回までの Try が今回も未定着でないか、同じ Problem が繰り返されていないかを指摘する。",
   ].join("\n");
+  if (system.length > 32_000) return new Response("付箋の内容が長すぎます。", { status: 413 });
 
   // @ai-sdk/google の既定 env は GOOGLE_GENERATIVE_AI_API_KEY のため、既存キーを明示的に渡す
   const google = createGoogleGenerativeAI({ apiKey });
 
   const result = streamText({
     model: google("gemini-2.5-flash"),
+    maxOutputTokens: 2048,
+    maxRetries: 0,
+    abortSignal: AbortSignal.any([req.signal, AbortSignal.timeout(30_000)]),
     system,
     messages: await convertToModelMessages(messages),
     // ツール（読み取り専用・盤面非破壊）。引数は取らず、現在の retro を対象にする。
@@ -88,7 +112,7 @@ export async function POST(req: Request) {
       }),
     },
     // ツール呼び出し→結果を踏まえた応答、の複数ステップを許可（無料枠保護に上限は低め）
-    stopWhen: stepCountIs(5),
+    stopWhen: stepCountIs(2),
   });
 
   return result.toUIMessageStreamResponse();

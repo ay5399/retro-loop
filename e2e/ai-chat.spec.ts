@@ -3,8 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { loginViaMagicLink } from "./helpers";
 
 // バックログ D1「ふりかえり画面に併設したAIチャットアシスタント」の実ブラウザ検証。
-// - チャットは @ai-sdk/google（gemini-2.5-flash）を直接叩く＝実API（LLM_PROVIDER=mock は無関係）。
-//   応答は非決定的なので「アシスタントの返答が非空でストリーム表示される」ことを smoke 検証する。
+// - チャットも LLM_PROVIDER=mock に従う。通常E2Eから実APIは呼び出さない。
 // - 認可（未ログイン=401 / 非メンバー=403）は /api/chat を直叩きして確認する。
 const prisma = new PrismaClient();
 
@@ -78,8 +77,7 @@ test("チャットUIが表示され、サジェストが出る（AIはチャッ�
   await expect(page.getByText("AI 問い返し", { exact: true })).toHaveCount(0);
 });
 
-test("送信するとアシスタントの返答が非空でストリーム表示される（実Gemini smoke）", async ({ page }) => {
-  test.skip(!process.env.GEMINI_API_KEY, "実APIを使うsmoke testにはGEMINI_API_KEYが必要です");
+test("送信するとモックの返答がストリーム表示される（外部API不要）", async ({ page }) => {
   // 初回ルートのcold compile＋ストリーミングで遅いのでテスト全体も長めに
   test.setTimeout(150_000);
 
