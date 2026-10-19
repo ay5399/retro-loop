@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "summary", "noChange", "risk", "sources", "screenshots", "assumption", "successCriteria"],
+  "properties": {
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "noChange": { "type": "boolean" },
+    "risk": { "type": "string", "enum": ["reversible", "approval-required"] },
+    "sources": { "type": "array", "items": { "type": "string" } },
+    "screenshots": { "type": "array", "items": { "type": "string" } },
+    "assumption": { "type": "string" },
+    "successCriteria": { "type": "string" }
+  }
+}

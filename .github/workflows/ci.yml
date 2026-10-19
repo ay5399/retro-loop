@@ -29,6 +29,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=critical
       - run: npm run lint
       - run: npm run typecheck
+      - run: node --test scripts/automation/*.test.mjs
 
   build:
     name: Build
@@ -40,6 +41,9 @@ jobs:
       AUTH_SECRET: ci-only-secret-not-used-in-production
       AUTH_URL: http://localhost:3000
       LLM_PROVIDER: mock
+      AUTOMATION_TEST: '1'
+      ALLOW_LIVE_LLM: 'false'
+      ALLOW_LIVE_EMAIL: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -73,6 +77,9 @@ jobs:
       AUTH_SECRET: ci-only-secret-not-used-in-production
       AUTH_URL: http://localhost:3000
       LLM_PROVIDER: mock
+      AUTOMATION_TEST: '1'
+      ALLOW_LIVE_LLM: 'false'
+      ALLOW_LIVE_EMAIL: 'false'
       CI: true
     steps:
       - uses: actions/checkout@v4
@@ -84,12 +91,4 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 14
+      # Browser artifacts stay local; avoid recurring hosted artifact storage.

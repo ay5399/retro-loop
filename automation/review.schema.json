@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sha", "verdict", "risk", "reason"],
+  "properties": {
+    "sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "verdict": { "type": "string", "enum": ["approve", "revise", "reject"] },
+    "risk": { "type": "string", "enum": ["reversible", "approval-required"] },
+    "reason": { "type": "string" }
+  }
+}

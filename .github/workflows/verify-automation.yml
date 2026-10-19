@@ -1,0 +1,78 @@
+name: Verify Automation
+run-name: Verify Automation ${{ inputs.target_sha }} ${{ inputs.request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        required: true
+        type: string
+      request_id:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: retroloop
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d retroloop" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:test-only@localhost:5432/retroloop
+      DIRECT_URL: postgresql://postgres:test-only@localhost:5432/retroloop
+      AUTH_SECRET: disposable-ci-secret
+      AUTH_URL: http://localhost:3000
+      LLM_PROVIDER: mock
+      AUTOMATION_TEST: '1'
+      ALLOW_LIVE_LLM: 'false'
+      ALLOW_LIVE_EMAIL: 'false'
+      NEXT_TELEMETRY_DISABLED: '1'
+      CI: 'true'
+      TARGET_SHA: ${{ inputs.target_sha }}
+    steps:
+      - name: Validate public standard-runner verification
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (!/^[a-f0-9]{40}$/.test(process.env.TARGET_SHA)) throw new Error('Invalid SHA');
+            const { data } = await github.rest.repos.get(context.repo);
+            if (data.private) throw new Error('Only public repositories may use unattended verification');
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm run check
+      - run: node --test scripts/automation/*.test.mjs
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Cap screenshot evidence at 20 MiB; reject symlinks
+        run: |
+          node --input-type=module -e '
+          import {readdir,lstat} from "node:fs/promises";
+          const dir="e2e/__screens__"; let total=0;
+          for(const name of await readdir(dir)) {
+            const s=await lstat(`${dir}/${name}`);
+            if(!s.isFile() || !name.endsWith(".png")) throw Error("Unexpected evidence file");
+            total+=s.size;
+          }
+          if(total>20*1024*1024) throw Error("Evidence budget exceeded");'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence
+          path: e2e/__screens__/*.png
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
