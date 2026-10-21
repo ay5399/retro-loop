@@ -10,10 +10,16 @@ async function vercel(endpoint) {
   return response.json();
 }
 async function verifySafeRuntime(url, expectedSha) {
-  const healthResponse = await fetch(`${url}/api/health`, { headers: { Authorization: `Bearer ${process.env.HEALTHCHECK_TOKEN}` }, signal: AbortSignal.timeout(30_000) });
-  if (!healthResponse.ok) throw new Error('Runtime health check failed');
-  const health = await healthResponse.json();
-  if (!/^[a-f0-9]{40}$/.test(health.sha ?? '') || (expectedSha && health.sha !== expectedSha) || health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const healthResponse = await fetch(`${url}/api/health`, { headers: { Authorization: `Bearer ${process.env.HEALTHCHECK_TOKEN}`, 'Cache-Control': 'no-cache' }, cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+    if (healthResponse.ok) {
+      const health = await healthResponse.json();
+      if (health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
+      if (/^[a-f0-9]{40}$/.test(health.sha ?? '') && (!expectedSha || health.sha === expectedSha)) return;
+    } else if (![404, 503].includes(healthResponse.status)) throw new Error('Runtime health check failed');
+    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error('Runtime SHA or external-call gates do not match the release policy');
 }
 async function productionUrl(project) {
   const alias = process.env.AUTOMATION_PRODUCTION_ALIAS;

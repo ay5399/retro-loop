@@ -47,7 +47,8 @@ createInterface({ input: proc.stdout }).on('line', line => {
     else current.resolve({ text: current.text, firstDeltaMs: current.firstDeltaMs, elapsedMs: Date.now() - current.started });
   }
 });
-const timer = setTimeout(() => { abort(new Error('Probe exceeded 330 seconds')); proc.kill(); }, 330_000);
+const controller = new AbortController(), expiresAt = Date.now() + 330_000;
+const timer = setTimeout(() => { controller.abort(); abort(new Error('Probe exceeded 330 seconds')); proc.kill(); }, 330_000);
 try {
   await rpc('initialize', { clientInfo: { name: 'retroloop_live_probe', title: 'RetroLoop live dialogue probe', version: '1.0.0' } });
   send({ method: 'initialized', params: {} });
@@ -72,7 +73,7 @@ try {
     report.scope = 'Real AiChat and KptBoard UI; real Plus inference; synthetic persistence, no production DB';
     report.excluded = 'Production chat route, Gemini provider, authentication and PostgreSQL persistence are covered separately by mock CI, not this live fixture';
     const { runBrowserProbe } = await import('./verify-live-chat-ui.mjs');
-    await runBrowserProbe({ complete, dir, report, inputs, sourceRoot });
+    await runBrowserProbe({ complete, dir, report, inputs, sourceRoot, signal: controller.signal, expiresAt });
   } else {
     for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }

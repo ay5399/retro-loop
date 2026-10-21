@@ -40,9 +40,13 @@ test('unknown costs, paid usage, duplicates and accumulated reservations stop ex
 test('unverified/expired billing and changed policy stop execution', () => {
   assert.ok(auditProblems(policy, {}).length);
   const now = new Date('2026-10-19T04:00:00Z');
-  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelGitDeploymentsDisabled: true,
+  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelAutomationTokenVerified: true, vercelGitDeploymentsDisabled: true,
     services: Object.fromEntries(policy.services.map(s => [s, { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'provider settings checked' }])) };
   assert.deepEqual(auditProblems(policy, audit, now), []);
+  audit.vercelAutomationTokenVerified = false;
+  assert.ok(auditProblems(policy, audit, now).some(p => p.includes('workflow authentication')));
+  assert.deepEqual(auditProblems(policy, audit, now, 'development'), []);
+  audit.vercelAutomationTokenVerified = true;
   assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
   assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'updated' } }, audit, now), []);
   assert.ok(auditProblems({ ...policy, operatingLimitYen: 700 }, audit, now).length);
@@ -57,7 +61,7 @@ test('development can proceed without production audit; disabled services do not
   assert.ok(auditProblems(policy, audit, now, 'development').some(p => p.includes('Vercel')));
   audit.vercelGitDeploymentsDisabled = true;
   audit.policyHashes.release = policyHash(policy);
-  Object.assign(audit, { productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true });
+  Object.assign(audit, { productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelAutomationTokenVerified: true });
   for (const s of ['vercel', 'neon']) audit.services[s] = { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'checked' };
   for (const s of ['gemini', 'resend', 'devlake']) audit.services[s] = { mode: 'disabled', evidence: 'No call path in this automation' };
   assert.deepEqual(auditProblems(policy, audit, now), []);

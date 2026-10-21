@@ -1,22 +1,34 @@
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { chromium, expect } from '@playwright/test';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
-export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoot = root }) {
+export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoot = root, signal, expiresAt = Date.now() + 330_000 }) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   const { build } = localRequire('esbuild');
   const postcss = localRequire('postcss'), tailwind = localRequire('@tailwindcss/postcss');
+  const candidateCss = await readFile(path.join(sourceRoot, 'src/app/globals.css'), 'utf8');
+  postcss.parse(candidateCss).walkAtRules(rule => {
+    if (!['import', 'media', 'theme', 'layer', 'apply', 'supports', 'keyframes', 'container', 'property', 'starting-style'].includes(rule.name) || (rule.name === 'import' && rule.params !== '"tailwindcss"')) throw new Error('Candidate CSS may not load scripts, configuration or additional files');
+  });
+  const sourceDir = await realpath(path.join(sourceRoot, 'src'));
+  const modulesDir = await realpath(path.join(root, 'node_modules'));
+  const fixtureFiles = await Promise.all(['live-ui-entry.tsx', 'live-ui-store.ts'].map(f => realpath(path.join(root, 'scripts/automation', f))));
   await build({ absWorkingDir: root, nodePaths: [path.join(root, 'node_modules')], tsconfigRaw: { compilerOptions: { baseUrl: sourceRoot, paths: { '@/*': ['src/*'] } } }, entryPoints: ['scripts/automation/live-ui-entry.tsx'], outfile: path.join(dir, 'app.js'), bundle: true, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'synthetic-actions', setup(b) {
     b.onResolve({ filter: /^\.\.\/\.\.\/src\// }, args => args.importer.endsWith('live-ui-entry.tsx') ? { path: path.join(sourceRoot, args.path.slice(6) + '.tsx') } : undefined);
     b.onResolve({ filter: /^\.\/actions$/ }, args => args.importer.endsWith('kpt-board.client.tsx') ? { path: path.join(root, 'scripts/automation/live-ui-store.ts') } : undefined);
+    b.onLoad({ filter: /.*/ }, async args => {
+      const file = await realpath(args.path);
+      if (!file.startsWith(sourceDir + path.sep) && !file.startsWith(modulesDir + path.sep) && !fixtureFiles.includes(file)) throw new Error('Browser bundle attempted to read outside source, dependencies or fixture');
+      return undefined;
+    });
   } }] });
-  const css = await postcss([tailwind({ base: sourceRoot })]).process(await readFile(path.join(sourceRoot, 'src/app/globals.css'), 'utf8'), { from: path.join(root, 'src/app/globals.css') });
+  const css = await postcss([tailwind({ base: sourceRoot })]).process(candidateCss, { from: path.join(root, 'src/app/globals.css') });
   await writeFile(path.join(dir, 'styles.css'), css.css);
   const session = randomBytes(32).toString('hex');
   let origin, count = 0;
@@ -53,7 +65,10 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
   let browser;
+  const stop = () => { browser?.close().catch(() => {}); server.closeAllConnections(); };
+  signal?.addEventListener('abort', stop, { once: true });
   try {
+    signal?.throwIfAborted();
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } });
     await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
@@ -64,7 +79,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
       await page.locator('[data-chat-input]').fill(inputs[i]);
       await page.locator('[data-chat-send]').click();
       await expect(page.locator('[data-chat-send]')).toBeDisabled();
-      await expect(page.locator('[data-chat-input]')).toBeEnabled({ timeout: 90_000 });
+      await expect(page.locator('[data-chat-input]')).toBeEnabled({ timeout: Math.max(1, Math.min(90_000, expiresAt - Date.now())) });
       const replies = page.locator('[data-ai-chat] li.justify-start');
       await expect(replies).toHaveCount(i + 1);
       expect((await replies.last().innerText()).trim().length).toBeGreaterThan(10);
@@ -80,5 +95,5 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
     await page.reload();
     await expect(page.locator('[data-lane="TRY"] [data-note-id] p').filter({ hasText: saved })).toBeVisible();
     report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, liveCalls: count };
-  } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
+  } finally { signal?.removeEventListener('abort', stop); await browser?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
