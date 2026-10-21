@@ -259,7 +259,7 @@ async function develop(kind) {
     const verdict = await review(dir, sha, result);
     if (needsLiveAiVerification(files)) {
       if (policy.liveAiVerification?.enabled !== true) throw new Error('Live AI UI verification is required for this change but is not enabled');
-      await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--output-dir', path.join(runDir, 'live-ai')], { env: safeEnv(), timeout: 360_000, log: path.join(runDir, 'live-ai.log') });
+      await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--output-dir', path.join(runDir, 'live-ai')], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: 360_000, log: path.join(runDir, 'live-ai.log') });
       const live = await json(path.join(runDir, 'live-ai/result.json'), {});
       if (live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Live AI browser verification failed');
     }

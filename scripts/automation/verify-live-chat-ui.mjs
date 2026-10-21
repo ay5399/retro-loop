@@ -16,7 +16,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
     b.onResolve({ filter: /^\.\.\/\.\.\/src\// }, args => args.importer.endsWith('live-ui-entry.tsx') ? { path: path.join(sourceRoot, args.path.slice(6) + '.tsx') } : undefined);
     b.onResolve({ filter: /^\.\/actions$/ }, args => args.importer.endsWith('kpt-board.client.tsx') ? { path: path.join(root, 'scripts/automation/live-ui-store.ts') } : undefined);
   } }] });
-  const css = await postcss([tailwind()]).process(await readFile(path.join(root, 'src/app/globals.css'), 'utf8'), { from: path.join(root, 'src/app/globals.css') });
+  const css = await postcss([tailwind({ base: sourceRoot })]).process(await readFile(path.join(sourceRoot, 'src/app/globals.css'), 'utf8'), { from: path.join(root, 'src/app/globals.css') });
   await writeFile(path.join(dir, 'styles.css'), css.css);
   const session = randomBytes(32).toString('hex');
   let origin, count = 0;
