@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { slot, mutationDue, approvalMatches, requireReview, reserve, auditProblems, policyHash, changedPathsBlocked } from './core.mjs';
+import { slot, mutationDue, approvalMatches, requireReview, reserve, auditProblems, policyHash, changedPathsBlocked, needsLiveAiVerification } from './core.mjs';
 const policy = JSON.parse(readFileSync(new URL('../../automation/policy.json', import.meta.url)));
+test('AI experience and shared UI edits require live verification; docs use mock CI', () => {
+  assert.equal(needsLiveAiVerification(['src/app/teams/[teamId]/retros/[retroId]/ai-chat.tsx']), true);
+  assert.equal(needsLiveAiVerification(['src/app/api/chat/route.ts']), true);
+  assert.equal(needsLiveAiVerification(['src/components/loop.tsx']), true);
+  assert.equal(needsLiveAiVerification(['src/app/teams/[teamId]/retros/[retroId]/kpt-board.client.tsx']), true);
+  assert.equal(needsLiveAiVerification(['docs/BRIEF.md']), false);
+});
 test('JST slots and latest missed slot across midnight', () => {
   assert.equal(slot(new Date('2026-10-19T20:00:00Z')), '2026-10-20-5');
   assert.equal(slot(new Date('2026-10-19T04:00:00Z')), '2026-10-19-13');

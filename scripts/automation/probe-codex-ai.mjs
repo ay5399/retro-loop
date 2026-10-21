@@ -3,10 +3,14 @@ import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 const home = process.env.RETRO_AUTOMATION_HOME;
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
 const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
-const dir = path.join(home, 'live-ai-probe');
+const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
+const sourceRoot = path.resolve(arg('--source') ?? installation.repositoryPath);
+const { ACTION_GUIDANCE } = await import(pathToFileURL(path.join(sourceRoot, 'src/lib/llm/chat-guidance.ts')).href);
+const dir = path.resolve(arg('--output-dir') ?? path.join(home, 'live-ai-probe'));
 await mkdir(dir, { recursive: true });
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/TOKEN|SECRET|API_KEY|DATABASE_URL|DIRECT_URL|CLAUDE_CODE_USE_|ANTHROPIC_|OPENAI_|GIT_CONFIG_/i.test(key)));
 const cmd = installation.commands.codex;
@@ -32,6 +36,7 @@ createInterface({ input: proc.stdout }).on('line', line => {
   if (msg.method === 'item/agentMessage/delta') {
     active.text += msg.params.delta;
     active.firstDeltaMs ??= Date.now() - active.started;
+    active.onDelta?.(msg.params.delta);
   }
   if (msg.method === 'turn/completed') {
     const current = active; active = null;
@@ -39,7 +44,7 @@ createInterface({ input: proc.stdout }).on('line', line => {
     else current.resolve({ text: current.text, firstDeltaMs: current.firstDeltaMs, elapsedMs: Date.now() - current.started });
   }
 });
-const timer = setTimeout(() => { abort(new Error('Probe exceeded 180 seconds')); proc.kill(); }, 180_000);
+const timer = setTimeout(() => { abort(new Error('Probe exceeded 330 seconds')); proc.kill(); }, 330_000);
 try {
   await rpc('initialize', { clientInfo: { name: 'retroloop_live_probe', title: 'RetroLoop live dialogue probe', version: '1.0.0' } });
   send({ method: 'initialized', params: {} });
@@ -51,13 +56,22 @@ try {
   if (!model) throw new Error('No model returned');
   report.model = model.model ?? model.id;
   const thread = await rpc('thread/start', { model: report.model, cwd: dir, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: true,
-    baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。' });
-  for (const input of ['レビュー待ちが長いので「気をつける」を次のアクションにしようと思います。具体化を手伝って。', '自分でできることにしたい。担当者や期限はまだ決めていません。勝手に決めず、必要なことを質問して。', '担当は私。来週月曜の朝会後に、自分のPRへレビュー希望時刻を記載してチームに共有します。保存前に確認できる形でまとめて。']) {
-    const completed = new Promise((resolve, reject) => { active = { resolve, reject, threadId: thread.thread.id, text: '', started: Date.now() }; });
+    baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。\n' + ACTION_GUIDANCE });
+  const inputs = ['レビュー待ちが長いので「気をつける」を次のアクションにしようと思います。具体化を手伝って。', '自分でできることにしたい。担当者や期限はまだ決めていません。勝手に決めず、必要なことを質問して。', '担当は私。2026年10月26日の朝会後に、自分のPRへレビュー希望時刻を記載してチームに共有します。保存前に確認できる形でまとめて。'];
+  const complete = async (input, onDelta) => {
+    const completed = new Promise((resolve, reject) => { active = { resolve, reject, onDelta, threadId: thread.thread.id, text: '', started: Date.now() }; });
     const start = rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: input }] });
     const [, output] = await Promise.all([start, completed]);
     if (!output.text.trim()) throw new Error('Model returned no visible text');
-    report.transcripts.push({ input, ...output });
+    return output;
+  };
+  if (process.argv.includes('--browser')) {
+    report.scope = 'Real AiChat and KptBoard UI; real Plus inference; synthetic persistence, no production DB';
+    report.excluded = 'Production chat route, Gemini provider, authentication and PostgreSQL persistence are covered separately by mock CI, not this live fixture';
+    const { runBrowserProbe } = await import('./verify-live-chat-ui.mjs');
+    await runBrowserProbe({ complete, dir, report, inputs, sourceRoot });
+  } else {
+    for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }
   report.status = 'passed';
 } catch (error) { report.status = 'failed'; report.reason = error.message; process.exitCode = 1; }

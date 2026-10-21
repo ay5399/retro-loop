@@ -70,6 +70,9 @@ export function changedPathsBlocked(paths, policy) {
 export function requireReview(review, sha) {
   if (review.sha !== sha || review.verdict !== 'approve' || !review.reason?.trim()) throw new Error('Claude did not approve this exact commit.');
 }
+export function needsLiveAiVerification(paths) {
+  return paths.some(p => /(?:^|\/)(?:ai-chat|kpt-board\.client)\.[jt]sx?$/.test(p) || p.startsWith('src/components/') || p.startsWith('src/hooks/') || p.startsWith('src/lib/llm/') || p === 'src/app/api/chat/route.ts' || /^scripts\/automation\/(?:probe-codex-ai|verify-live-chat-ui|live-ui-)/.test(p));
+}
 // Reserve the worst-case cost BEFORE a call; unknown costs never become free.
 export function reserve(ledger, id, maxYen, policy) {
   if (!Number.isSafeInteger(maxYen) || maxYen < 0) throw new Error('Unknown maximum cost');

@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir, open, stat, readdir, cp, lstat, rename } fr
 import path from 'node:path';
 import { userInfo } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
-import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, requireReview, approvalMatches, reserve } from './core.mjs';
+import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, requireReview, approvalMatches, reserve, needsLiveAiVerification } from './core.mjs';
 import { createAppAuth } from './github-app.mjs';
 
 const stateDir = process.env.RETRO_AUTOMATION_HOME;
@@ -257,6 +257,12 @@ async function develop(kind) {
     const sha = await git(['rev-parse', 'HEAD'], dir);
     // Review before publishing and executing the candidate in GitHub Actions.
     const verdict = await review(dir, sha, result);
+    if (needsLiveAiVerification(files)) {
+      if (policy.liveAiVerification?.enabled !== true) throw new Error('Live AI UI verification is required for this change but is not enabled');
+      await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--output-dir', path.join(runDir, 'live-ai')], { env: safeEnv(), timeout: 360_000, log: path.join(runDir, 'live-ai.log') });
+      const live = await json(path.join(runDir, 'live-ai/result.json'), {});
+      if (live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Live AI browser verification failed');
+    }
     await git(['push', '-u', 'origin', branch], dir);
     await checks(dir, `${kind}-after`);
     for (const image of result.screenshots) {
