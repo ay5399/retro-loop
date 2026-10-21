@@ -14,19 +14,29 @@ export function slot(now = new Date()) {
 export function mutationDue(lastDate, now = new Date()) {
   return !lastDate || (Date.parse(jstDate(now)) - Date.parse(lastDate)) / 86400000 >= 3;
 }
-export function policyHash(policy) {
-  return createHash('sha256').update(JSON.stringify(policy)).digest('hex');
+export function policyHash(policy, stage = 'release') {
+  // Product copy and scheduling do not change a provider's billing settings.
+  const fields = ['repository', 'owner', 'monthlyLimitYen', 'operatingLimitYen', 'allowPaidUsage', 'githubAuth', 'requireDedicatedWindowsUser', 'auditMaxAgeDays', 'services', 'protectedPaths'];
+  return createHash('sha256').update(JSON.stringify({ stage, ...Object.fromEntries(fields.map(key => [key, policy[key]])) })).digest('hex');
 }
-export function auditProblems(policy, audit, now = new Date()) {
+export function auditProblems(policy, audit, now = new Date(), stage = 'release') {
+  if (!['development', 'release'].includes(stage)) throw new Error('Unknown audit stage');
   const errors = [];
   if (policy.monthlyLimitYen !== 1000 || policy.operatingLimitYen > 800 || policy.allowPaidUsage) {
     errors.push('Paid usage is disabled until a separately reviewed hard-stop adapter is installed.');
   }
-  if (audit.policyHash !== policyHash(policy)) errors.push('Policy changed after the billing audit.');
-  for (const name of policy.services) {
+  if ((audit.policyHashes?.[stage] ?? audit.policyHash) !== policyHash(policy, stage)) errors.push(`${stage}: cost/security policy has not been audited.`);
+  const services = stage === 'development' ? ['codex', 'claude', 'github'] : policy.services;
+  for (const name of services) {
     const s = audit.services?.[name];
     if (!s || !['included-hard-stop', 'free-hard-stop', 'disabled'].includes(s.mode)) {
       errors.push(`${name}: billing audit is unverified`); continue;
+    }
+    // These services have no call path from the mock-only automation. A disabled
+    // declaration needs evidence, but cannot accrue usage or expire with time.
+    if (s.mode === 'disabled' && ['gemini', 'resend', 'devlake'].includes(name)) {
+      if (!s.evidence?.trim()) errors.push(`${name}: disabled-service evidence is missing`);
+      continue;
     }
     const age = now.getTime() - Date.parse(s.verifiedAt);
     if (!Number.isFinite(age) || age < 0 || age > policy.auditMaxAgeDays * 86400000 || !s.evidence) {
@@ -37,11 +47,14 @@ export function auditProblems(policy, audit, now = new Date()) {
     }
   }
   if (audit.autoRechargeDisabled !== true) errors.push('Automatic recharge / additional usage has not been verified disabled.');
-  if (audit.dedicatedWindowsUser !== true) errors.push('A dedicated Windows user with a separate credential store is required.');
-  if (audit.botHasNoVariableWrite !== true) errors.push('GitHub bot must not have Actions variable write permissions.');
-  if (audit.productionLiveCallsDisabled !== true) errors.push('Production external-call gates have not been verified.');
-  if (audit.rollbackLiveCallsDisabled !== true) errors.push('Rollback deployments must also have live API/email access disabled.');
+  if (policy.requireDedicatedWindowsUser !== false && audit.dedicatedWindowsUser !== true) errors.push('A dedicated Windows user with a separate credential store is required.');
+  if (policy.githubAuth !== 'app' && audit.botHasNoVariableWrite !== true) errors.push('GitHub bot must not have Actions variable write permissions.');
+  // Publishing a candidate branch can trigger Vercel Git integration too.
   if (audit.vercelGitDeploymentsDisabled !== true) errors.push('Duplicate Vercel Git deployments have not been disabled.');
+  if (stage === 'release') {
+    if (audit.productionLiveCallsDisabled !== true) errors.push('Production external-call gates have not been verified.');
+    if (audit.rollbackLiveCallsDisabled !== true) errors.push('Rollback deployments must also have live API/email access disabled.');
+  }
   return errors;
 }
 export function approvalMatches(comments, owner, id, sha) {

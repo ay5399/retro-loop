@@ -9,11 +9,22 @@ async function vercel(endpoint) {
   if (!response.ok) throw new Error(`Vercel API failed: ${response.status}`);
   return response.json();
 }
+async function verifySafeRuntime(url, expectedSha) {
+  const healthResponse = await fetch(`${url}/api/health`, { headers: { Authorization: `Bearer ${process.env.HEALTHCHECK_TOKEN}` }, signal: AbortSignal.timeout(30_000) });
+  if (!healthResponse.ok) throw new Error('Runtime health check failed');
+  const health = await healthResponse.json();
+  if (!/^[a-f0-9]{40}$/.test(health.sha ?? '') || (expectedSha && health.sha !== expectedSha) || health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
+}
 if (action === 'previous') {
   const data = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   const previous = data.targets?.production?.url;
   if (!previous || !/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(previous)) throw new Error('No previous production deployment available for rollback');
+  const rollback = await vercel(`/v13/deployments/${encodeURIComponent(previous)}?teamId=${encodeURIComponent(team)}`);
+  const previousSha = rollback.meta?.automationReleaseSha;
+  if (!/^[a-f0-9]{40}$/.test(previousSha ?? '')) throw new Error('Rollback deployment has no verified release SHA metadata');
+  await verifySafeRuntime(`https://${data.name}.vercel.app`, previousSha);
   await appendFile(process.env.GITHUB_OUTPUT, `previous=https://${previous}\n`);
+  await appendFile(process.env.GITHUB_OUTPUT, `previous_sha=${previousSha}\n`);
 } else if (action === 'verify') {
   const deployed = (await readFile('.deployment-url', 'utf8')).trim();
   if (!/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(deployed)) throw new Error('Invalid deployment URL');
@@ -24,10 +35,7 @@ if (action === 'previous') {
   const alias = data.alias?.find(a => a === `${current.name}.vercel.app`);
   if (!alias || !/^[a-zA-Z0-9.-]+$/.test(alias)) throw new Error('Production alias unavailable');
   const url = `https://${alias}`;
-  const healthResponse = await fetch(`${url}/api/health`, { headers: { Authorization: `Bearer ${process.env.HEALTHCHECK_TOKEN}` }, signal: AbortSignal.timeout(30_000) });
-  if (!healthResponse.ok) throw new Error('Production health check failed');
-  const health = await healthResponse.json();
-  if (health.sha !== process.env.TARGET_SHA || health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
+  await verifySafeRuntime(url, process.env.TARGET_SHA);
   for (const pathname of ['/', '/signin']) {
     const response = await fetch(new URL(pathname, url), { signal: AbortSignal.timeout(30_000) });
     const text = await response.text();
@@ -40,7 +48,11 @@ if (action === 'previous') {
 } else if (action === 'verify-rollback') {
   const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   if (`https://${current.targets?.production?.url}` !== process.env.PREVIOUS) throw new Error('Previous production target was not restored');
+  const deployment = await vercel(`/v13/deployments/${encodeURIComponent(new URL(process.env.PREVIOUS).hostname)}?teamId=${encodeURIComponent(team)}`);
+  const sha = deployment.meta?.automationReleaseSha;
+  if (!/^[a-f0-9]{40}$/.test(sha ?? '') || (process.env.PREVIOUS_SHA && process.env.PREVIOUS_SHA !== sha)) throw new Error('Rollback release SHA metadata mismatch');
   const url = `https://${current.name}.vercel.app`;
+  await verifySafeRuntime(url, sha);
   for (const pathname of ['/', '/signin']) {
     const response = await fetch(new URL(pathname, url), { signal: AbortSignal.timeout(30_000) });
     const text = await response.text();

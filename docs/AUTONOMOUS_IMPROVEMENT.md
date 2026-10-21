@@ -1,6 +1,30 @@
 # 自律改善の運用と費用監査
 
+## GitHub認証方針の更新（2026-10-21）
+
+`githubAuth=app` に変更した。追加ユーザーアカウントは不要で、所有者のアカウントに非公開GitHub Appを登録する。[登録・接続手順](GITHUB_APP_SETUP.md)を参照。以下に残る専用ボットアカウントの説明は旧方式の説明であり、App方式では適用しない。全権限の許可を撤回し、必要最小限の権限に戻した。Secrets・Variables・Workflowsと管理設定の書き込み権限は拒否する。短期トークンの対象はretro-loopだけにする。アカウント／Organization権限は付与しない。監査の自己申告`botHasNoVariableWrite`で代用しない。他プロジェクトの認証と所有者のghログインは変更しない。
+
+## 改善の方針と週次レビュー
+
+[PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md) を企画の基準とし、実行時の指示は `automation/policy.json` の `productDirection` から渡す。代表シナリオの変更前後を証拠にし、AI協働の判断過程を残す。通常改善の採否はClaude CodeとCIで判断し、作者は週次で成果・費用・リスクと次の優先順位を確認する。通常変更ごとの人間の事前承認は求めない。破壊的変更の承認と費用監査等の停止条件は維持する。週次レビュー用の別スケジュールや通知は新設せず、各実行のIssueをレビュー材料にする。
+
 ## 実行内容
+
+検証方針は [PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md) の「モックと実AIの検証方針」を参照。通常CIはモックを維持するが、AI体験に関わる変更は別枠の少数の実AI検証も必要。生成エージェント自身に本番API呼び出しを許可するものではない。現ランナーの検証workflowはモックのみで、実AI検証の自動統合は未実装。実AI証拠が不足する場合は品質検証の未完了を明示し、自動で実AI検証済みと報告しない。接続確認の記録は [LIVE_AI_VERIFICATION.md](LIVE_AI_VERIFICATION.md)。
+
+### 2026-10-20: 過剰な停止条件の是正
+
+監査を二段階に分離した。実装・検証にはCodex、Claude、GitHubの費用確認と実行アカウントの隔離を要求する。本番のVercel・Neon、稼働中／復旧先の外部呼び出し停止は、マージ・配信する直前に確認する。本番監査だけが未完了なら、実装・独立レビュー・CIを進めてPRを未マージで残す。ただし候補ブランチのpushでも自動配信され得るため、Vercel Git自動配信の無効化は実装開始前にも必須。
+
+企画文や実行時刻の変更では監査を失効させない。費用・対象リポジトリ・保護範囲に関する設定の変更では失効する。旧形式の監査は初回のみ再登録が必要。使わないGemini・Resend・DevLakeは、呼び出し経路がないことを証跡付きで `disabled` と登録でき、この宣言には週次更新を求めない。実際に使うサービスの費用確認は引き続き7日で失効する。
+
+実装条件の未完了は終了コード2。本番条件と分けて `result.json` の `problems` / `releaseProblems` に保存する。CLIログイン成功だけでは追加課金なしの証明にしない。GitHubボットの実在の設定も確認する。2026-10-21の所有者指示により `requireDedicatedWindowsUser=false` とし、専用Windowsユーザーは必須にしない。インストーラーは実行したWindowsユーザーでタスクを登録する。
+
+実装用の監査だけを登録する場合は次を使う。この操作ではGitHubの本番配信許可期限を書き換えない。
+
+```powershell
+node scripts/automation/record-audit.mjs C:/private/verified-development-audit.json --development
+```
 
 Windowsタスク `RetroLoop-AutonomousImprovement` が日本時間5時・13時・21時とログオン時に起動する。各回通常改善1件、最大90分。ログオン時は直近1枠だけを対象にし、同じ枠を再実行しない。PCの起動と所有者のWindowsログオンが必要。スリープ解除はWindows・機器の対応状況に依存する。
 
@@ -28,7 +52,7 @@ Get-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 無人実行のGitHub認証には**承認者と異なる専用ボットアカウント**が必要。所有者本人の認証のままでは実装・配信へ進まない。ボット作成や資格情報の発行・切替は自動では行わない。
 
-さらに、専用の標準Windowsユーザーと別の資格情報ストアで実行する。`workspace-write` は読み取りを全面的に隔離する機能ではないため、所有者デスクトップのユーザー `ay539` ではモデル実行へ進まない。ボットにはActions変数の書き込み権限を与えない。監査に `dedicatedWindowsUser=true`、`botHasNoVariableWrite=true` を含める。production環境がmainブランチのみを許可し、mainにPR必須・CI必須の保護があることもAPIで確認する。
+専用Windowsユーザーは所有者判断で不要とした（`requireDedicatedWindowsUser=false`）。別ユーザーで実行したという監査証跡は作らない。将来trueへ戻す場合は専用ユーザーの実在確認が必要。GitHubボットと承認者の分離は維持し、ボットにはActions変数の書き込み権限を与えない。監査に `botHasNoVariableWrite=true` を含める。production環境がmainブランチのみを許可し、mainにPR必須・CI必須の保護があることもAPIで確認する。
 
 初期状態は**費用監査待ちで停止**する。認証済みCLIが存在することは課金設定の証明ではない。未確認の状態を自動で承認済みに書き換えない。
 
@@ -68,11 +92,19 @@ node scripts/automation/record-audit.mjs C:/private/verified-retro-audit.json
 & "$env:RETRO_AUTOMATION_HOME/launch.ps1" --dry-run
 ```
 
-監査は7日で失効する。ポリシー変更でも失効する。期限後や実行条件を取得できない場合は停止する。実プラン未確認のサービスを無料として登録しない。本番配信workflowも監査期限を検証する。
+稼働するサービスの監査は7日で失効する。費用・セキュリティに関わるポリシー変更でも失効する。実装段階の期限後や実行条件を取得できない場合は実装を停止する。本番段階だけが未完了なら、PRを未マージで残す。実プラン未確認のサービスを無料として登録しない。本番配信workflowも監査期限を検証する。
 
 現在、実課金設定へのアクセスを確認できていないため、初回監査は未完了。リポジトリ上の設定とCLI認証状態だけを観測済みとして扱う。
 
 ## 検証・停止・復旧
+
+### 初回の安全な本番基準版
+
+旧版に停止制御やSHAメタデータがない場合、通常配信へ進めない。所有者が確認した固定のhealth用秘密値をローカル非公開の`production-health.json`の`token`と、GitHubのproduction環境Secret `AUTOMATION_HEALTHCHECK_TOKEN`に同じ値で保存する。鍵をコマンド出力や文書に貼らない。
+
+レビュー済み変更がmainへ反映され、そのSHAのCIが成功した後、クリーンな同じSHAのチェックアウトで `RETRO_AUTOMATION_HOME` を設定し、`node scripts/automation/bootstrap-production.mjs` を実行する。これはVercel上でビルドし、`--prod --skip-domain --meta automationReleaseSha=<SHA>`と、`ALLOW_LIVE_LLM=false`・`ALLOW_LIVE_EMAIL=false`・4つのAI/メールキーを空・`AUTOMATION_RELEASE_SHA=<SHA>`・共通`HEALTHCHECK_TOKEN`を実行環境へ指定する。保護付きURLをVercel CLIで検証した後にだけpromoteし、公開エイリアスも検証する。正常結果を`safe-production-baseline.json`に保存してから、本番・復旧先の監査項目を登録する。
+
+通常配信は配信前にこの安全な基準版の公開healthと、Vercelの対象デプロイのSHAメタデータを照合する。復旧後も同じSHAに戻ったことを検証する。実行枠消費済みでも手動で通し実行する場合は、`node "$env:RETRO_AUTOMATION_HOME/runtime/run.mjs" --manual-run`を使う。定期枠の重複防止は変更しない。`--manual-run`は通常改善だけを実行する。
 
 ```powershell
 node --test scripts/automation/*.test.mjs
@@ -90,7 +122,7 @@ Claude不賛成、テスト失敗、保護対象の変更、調査・画面証�
 
 配信直前にRelease lease Issueへ復旧先を記録し、確認完了後にcloseする。中断・タイムアウト時は独立したRecover Interrupted Production workflowがleaseを読み、Incidentを開いて配信を止め、巻き戻しと公開導線の再確認を行う。本番は認証付き `/api/health` で対象SHA・外部呼び出し無効・実キー未設定を検証する。
 
-初回の安全な通し実行と本番配信は、費用監査を完了した後に実施する。それまでは定期タスクが起動しても前提条件の確認と停止理由の記録だけを行う。
+初回の実装・検証は実装段階の監査を完了した後に実施する。本番反映は別途、本番段階の監査を要求する。実装条件も未完了なら、定期タスクは前提条件の確認と停止理由の記録だけを行う。
 
 費用停止中は本番AIと認証メールも無効になるため、本番のマジックリンクログインは使えない。既存利用者はいない前提で費用保護を優先する。既存の契約プラン・請求情報・GitHubボット認証は未確認のため、自律運用の有効化にはこれらの確認が残る。
 

@@ -1,0 +1,20 @@
+// Owner-invoked setup. Never prints the private key, JWT or installation token.
+import { readFile, writeFile, rename } from 'node:fs/promises';
+import path from 'node:path';
+import { createAppAuth } from './github-app.mjs';
+const home = process.env.RETRO_AUTOMATION_HOME;
+const [appId, installationId, keyPath] = process.argv.slice(2);
+if (!home || !/^\d+$/.test(appId ?? '') || !/^\d+$/.test(installationId ?? '') || !keyPath) throw new Error('Set RETRO_AUTOMATION_HOME; usage: node scripts/automation/connect-github-app.mjs APP_ID INSTALLATION_ID PRIVATE_KEY_PATH');
+const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
+const privateKeyPath = path.resolve(keyPath);
+const relative = path.relative(path.resolve(installation.repositoryPath), privateKeyPath);
+if (!relative || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) throw new Error('Save the private key outside the repository and all automation worktrees.');
+const worktrees = path.relative(path.join(path.resolve(home), 'worktrees'), privateKeyPath);
+if (!worktrees || (!worktrees.startsWith('..' + path.sep) && worktrees !== '..' && !path.isAbsolute(worktrees))) throw new Error('Do not save the private key in automation worktrees.');
+const policy = JSON.parse(await readFile(path.join(home, 'policy.json'), 'utf8'));
+const config = { appId, installationId, privateKeyPath };
+await createAppAuth(config, policy.repository)();
+const target = path.join(home, 'github-app.json');
+await writeFile(`${target}.tmp`, JSON.stringify(config, null, 2) + '\n');
+await rename(`${target}.tmp`, target);
+console.log(`GitHub App connected: ${policy.repository}. Installation permissions and single-repository token scope verified. Owner CLI login unchanged. Billing audit remains separate.`);

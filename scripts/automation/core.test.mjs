@@ -37,7 +37,34 @@ test('unverified/expired billing and changed policy stop execution', () => {
     services: Object.fromEntries(policy.services.map(s => [s, { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'provider settings checked' }])) };
   assert.deepEqual(auditProblems(policy, audit, now), []);
   assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
-  assert.ok(auditProblems({ ...policy, hours: [6] }, audit, now).length);
+  assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'updated' } }, audit, now), []);
+  assert.ok(auditProblems({ ...policy, operatingLimitYen: 700 }, audit, now).length);
+});
+test('development can proceed without production audit; disabled services do not expire', () => {
+  const now = new Date('2026-10-20T00:00:00Z');
+  const audit = { policyHashes: { development: policyHash(policy, 'development') }, autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, vercelGitDeploymentsDisabled: true,
+    services: Object.fromEntries(['codex', 'claude', 'github'].map(s => [s, { mode: 'included-hard-stop', verifiedAt: now.toISOString(), evidence: 'checked' }])) };
+  assert.deepEqual(auditProblems(policy, audit, now, 'development'), []);
+  assert.ok(auditProblems(policy, audit, now).length);
+  audit.vercelGitDeploymentsDisabled = false;
+  assert.ok(auditProblems(policy, audit, now, 'development').some(p => p.includes('Vercel')));
+  audit.vercelGitDeploymentsDisabled = true;
+  audit.policyHashes.release = policyHash(policy);
+  Object.assign(audit, { productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true });
+  for (const s of ['vercel', 'neon']) audit.services[s] = { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'checked' };
+  for (const s of ['gemini', 'resend', 'devlake']) audit.services[s] = { mode: 'disabled', evidence: 'No call path in this automation' };
+  assert.deepEqual(auditProblems(policy, audit, now), []);
+  audit.services.codex.mode = 'disabled';
+  assert.ok(auditProblems(policy, audit, now, 'development').some(p => p.includes('required service')));
+});
+test('owner can waive Windows-user isolation without waiving bot or billing checks', () => {
+  const audit = {};
+  const errors = auditProblems(policy, audit);
+  assert.ok(!errors.some(p => p.includes('Windows user')));
+  assert.ok(auditProblems({ ...policy, githubAuth: 'legacy' }, audit).some(p => p.includes('GitHub bot')));
+  assert.ok(errors.some(p => p.includes('billing audit')));
+  assert.ok(auditProblems({ ...policy, requireDedicatedWindowsUser: true }, audit).some(p => p.includes('Windows user')));
+  assert.notEqual(policyHash(policy), policyHash({ ...policy, requireDedicatedWindowsUser: true }));
 });
 test('autonomous edits cannot change policy, authentication, migrations or workflows', () => {
   assert.deepEqual(changedPathsBlocked(['src/components/loop.tsx', 'docs/UI_GUIDELINES.md'], policy), []);

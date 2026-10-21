@@ -4,15 +4,20 @@ import { spawnSync } from 'node:child_process';
 import { policyHash, auditProblems } from './core.mjs';
 const home = process.env.RETRO_AUTOMATION_HOME;
 const source = process.argv[2];
+const stage = process.argv.includes('--development') ? 'development' : 'release';
 if (!home || !source) throw new Error('Set RETRO_AUTOMATION_HOME and supply an owner-verified audit JSON file. See docs/AUTONOMOUS_IMPROVEMENT.md.');
 const policy = JSON.parse(await readFile(path.join(home, 'policy.json'), 'utf8'));
 const audit = JSON.parse(await readFile(source, 'utf8'));
-audit.policyHash = policyHash(policy);
-const errors = auditProblems(policy, audit);
+audit.policyHashes = { ...audit.policyHashes, [stage]: policyHash(policy, stage) };
+// A full release audit also verifies all development prerequisites.
+if (stage === 'release') audit.policyHashes.development = policyHash(policy, 'development');
+const errors = auditProblems(policy, audit, new Date(), stage);
 if (errors.length) throw new Error(errors.join('\n'));
 const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
-const expiry = new Date(Math.min(...Object.values(audit.services).map(s => Date.parse(s.verifiedAt))) + policy.auditMaxAgeDays * 86400000).toISOString();
+if (stage === 'release') {
+const expiry = new Date(Math.min(...policy.services.filter(name => audit.services[name].mode !== 'disabled').map(name => Date.parse(audit.services[name].verifiedAt))) + policy.auditMaxAgeDays * 86400000).toISOString();
 const publish = spawnSync(installation.commands.gh.file, ['variable', 'set', 'AUTOMATION_BILLING_VERIFIED_UNTIL', '--repo', policy.repository, '--body', expiry], { windowsHide: true, encoding: 'utf8' });
 if (publish.status !== 0) throw new Error(`Unable to publish audit expiry: ${publish.stderr}`);
+}
 await writeFile(path.join(home, 'audit.json'), JSON.stringify(audit, null, 2) + '\n');
-console.log('Audit recorded. Validity is limited to seven days; provider settings must be rechecked.');
+console.log(`${stage} audit recorded. Active services expire after ${policy.auditMaxAgeDays} days. Development audit does not authorize production releases.`);
