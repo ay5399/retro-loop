@@ -16,10 +16,19 @@ export async function loginViaMagicLink(page: Page, email: string): Promise<void
   await page.getByPlaceholder("you@example.com").fill(email);
   await page.getByRole("button", { name: "ログインリンクを送る" }).click();
 
+  // sendVerificationRequest writes the file before Auth.js finishes storing the
+  // verification token. Wait for the completed server action before consuming it.
+  await page.waitForURL((u) => u.pathname === "/signin/verify");
+
   // dev フックが書き出したマジックリンクを読む（送信完了の実シグナル）
   const url = await waitForMagicLink();
   await page.goto(url);
-  await page.waitForURL((u) => !u.pathname.startsWith("/signin"));
+  await page.waitForURL((u) => !u.pathname.startsWith("/signin") && !u.pathname.startsWith("/api/auth"));
+  await page.context().cookies().then((cookies) => {
+    if (!cookies.some((cookie) => /^(?:__Secure-)?authjs\.session-token$/.test(cookie.name))) {
+      throw new Error("Magic-link callback did not establish an authenticated session");
+    }
+  });
 }
 
 /**
