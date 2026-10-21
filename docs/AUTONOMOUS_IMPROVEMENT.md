@@ -48,6 +48,8 @@ Get-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 ランナーとポリシーは `%LOCALAPPDATA%/RetroLoopAutomation` にコピーされる。自動編集するworktreeの外に置き、Codexはworkspace-write、Claudeはツールなし・MCPなしで起動する。APIキーを子プロセスに引き継がない。ランナー更新は所有者がインストーラーを再実行する。実行ログは `runs/`、月次費用台帳は `ledger-YYYY-MM.json`。
 
+自動改善のCodex起動だけに `windows.sandbox="elevated"` を指定する。`--ignore-user-config`で個人設定を読まない場合もWindowsのworkspace-writeを有効にするためで、他プロジェクトの設定・権限は変更しない。実効モードがread-onlyだった場合は「変更不要」にせず実行失敗として記録する。
+
 タスクはNodeを直接起動し、PowerShellのExecutionPolicyに依存しない。ビルド・DB・ブラウザテストは使い捨てのGitHub-hosted標準Ubuntuランナーで実行する。このPCでDocker・DB・開発サーバは起動しない。検証workflowには本番Secretsを渡さず、checkoutの資格情報も永続化しない。画面は1回20MiB以下・保存1日で取得する。GitHubのストレージ超過停止を監査してから運用する。
 
 無人実行のGitHub認証には**承認者と異なる専用ボットアカウント**が必要。所有者本人の認証のままでは実装・配信へ進まない。ボット作成や資格情報の発行・切替は自動では行わない。
@@ -102,7 +104,9 @@ node scripts/automation/record-audit.mjs C:/private/verified-retro-audit.json
 
 旧版に停止制御やSHAメタデータがない場合、通常配信へ進めない。所有者が確認した固定のhealth用秘密値をローカル非公開の`production-health.json`の`token`と、GitHubのproduction環境Secret `AUTOMATION_HEALTHCHECK_TOKEN`に同じ値で保存する。鍵をコマンド出力や文書に貼らない。
 
-レビュー済み変更がmainへ反映され、そのSHAのCIが成功した後、クリーンな同じSHAのチェックアウトで `RETRO_AUTOMATION_HOME` を設定し、`node scripts/automation/bootstrap-production.mjs` を実行する。これはVercel上でビルドし、`--prod --skip-domain --meta automationReleaseSha=<SHA>`と、`ALLOW_LIVE_LLM=false`・`ALLOW_LIVE_EMAIL=false`・4つのAI/メールキーを空・`AUTOMATION_RELEASE_SHA=<SHA>`・共通`HEALTHCHECK_TOKEN`を実行環境へ指定する。保護付きURLをVercel CLIで検証した後にだけpromoteし、公開エイリアスも検証する。正常結果を`safe-production-baseline.json`に保存してから、本番・復旧先の監査項目を登録する。
+レビュー済み変更がmainへ反映され、そのSHAのCIが成功した後、クリーンな同じSHAのチェックアウトで `RETRO_AUTOMATION_HOME` と `AUTOMATION_PRODUCTION_ALIAS=retro-blush.vercel.app` を設定し、`node scripts/automation/bootstrap-production.mjs` を実行する。GitHubにも同じ値のRepository Variable `AUTOMATION_PRODUCTION_ALIAS`を所有者が設定する。これはVercel上でビルドし、`--prod --skip-domain --meta automationReleaseSha=<SHA>`と、`ALLOW_LIVE_LLM=false`・`ALLOW_LIVE_EMAIL=false`・4つのAI/メールキーを空・`AUTOMATION_RELEASE_SHA=<SHA>`・共通`HEALTHCHECK_TOKEN`を実行環境へ指定する。保護付きURLをVercel CLIで検証した後にだけpromoteし、公開エイリアスも検証する。正常結果を`safe-production-baseline.json`に保存してから、本番・復旧先の監査項目を登録する。
+
+安全な基準版の確立後、Deploy Productionを `rollback_drill=true` で明示実行すると、正常な公開smokeの直後に意図的に失敗させる。通常のrollback、旧SHAの安全性確認、独立したRecover Interrupted Productionによるlease解放を確認するための訓練である。結果は意図的にfailureとなりIncidentで後続配信が止まる。所有者が旧SHA・外部呼び出し無効・公開画面の復旧とlease解放を確認し、訓練で作られたIncidentだけをcloseして解除する。通常配信の既定値はfalse。
 
 通常配信は配信前にこの安全な基準版の公開healthと、Vercelの対象デプロイのSHAメタデータを照合する。復旧後も同じSHAに戻ったことを検証する。実行枠消費済みでも手動で通し実行する場合は、`node "$env:RETRO_AUTOMATION_HOME/runtime/run.mjs" --manual-run`を使う。定期枠の重複防止は変更しない。`--manual-run`は通常改善だけを実行する。
 

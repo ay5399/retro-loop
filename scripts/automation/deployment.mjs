@@ -15,6 +15,13 @@ async function verifySafeRuntime(url, expectedSha) {
   const health = await healthResponse.json();
   if (!/^[a-f0-9]{40}$/.test(health.sha ?? '') || (expectedSha && health.sha !== expectedSha) || health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
 }
+async function productionUrl(project) {
+  const alias = process.env.AUTOMATION_PRODUCTION_ALIAS;
+  if (!/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(alias ?? '')) throw new Error('Configured production alias unavailable');
+  const binding = await vercel(`/v4/aliases/${encodeURIComponent(alias)}?projectId=${encodeURIComponent(project.id)}&teamId=${encodeURIComponent(team)}`);
+  if (binding.alias !== alias || binding.projectId !== project.id || binding.deploymentId !== project.targets?.production?.id) throw new Error('Configured production alias unavailable or points to a different deployment');
+  return `https://${alias}`;
+}
 if (action === 'previous') {
   const data = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   const previous = data.targets?.production?.url;
@@ -22,7 +29,7 @@ if (action === 'previous') {
   const rollback = await vercel(`/v13/deployments/${encodeURIComponent(previous)}?teamId=${encodeURIComponent(team)}`);
   const previousSha = rollback.meta?.automationReleaseSha;
   if (!/^[a-f0-9]{40}$/.test(previousSha ?? '')) throw new Error('Rollback deployment has no verified release SHA metadata');
-  await verifySafeRuntime(`https://${data.name}.vercel.app`, previousSha);
+  await verifySafeRuntime(await productionUrl(data), previousSha);
   await appendFile(process.env.GITHUB_OUTPUT, `previous=https://${previous}\n`);
   await appendFile(process.env.GITHUB_OUTPUT, `previous_sha=${previousSha}\n`);
 } else if (action === 'verify') {
@@ -32,9 +39,7 @@ if (action === 'previous') {
   if (data.readyState !== 'READY') throw new Error('Deployment is not READY');
   const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   if (current.targets?.production?.id !== data.id) throw new Error('Deployment is not the current production target');
-  const alias = data.alias?.find(a => a === `${current.name}.vercel.app`);
-  if (!alias || !/^[a-zA-Z0-9.-]+$/.test(alias)) throw new Error('Production alias unavailable');
-  const url = `https://${alias}`;
+  const url = await productionUrl(current);
   await verifySafeRuntime(url, process.env.TARGET_SHA);
   for (const pathname of ['/', '/signin']) {
     const response = await fetch(new URL(pathname, url), { signal: AbortSignal.timeout(30_000) });
@@ -51,7 +56,7 @@ if (action === 'previous') {
   const deployment = await vercel(`/v13/deployments/${encodeURIComponent(new URL(process.env.PREVIOUS).hostname)}?teamId=${encodeURIComponent(team)}`);
   const sha = deployment.meta?.automationReleaseSha;
   if (!/^[a-f0-9]{40}$/.test(sha ?? '') || (process.env.PREVIOUS_SHA && process.env.PREVIOUS_SHA !== sha)) throw new Error('Rollback release SHA metadata mismatch');
-  const url = `https://${current.name}.vercel.app`;
+  const url = await productionUrl(current);
   await verifySafeRuntime(url, sha);
   for (const pathname of ['/', '/signin']) {
     const response = await fetch(new URL(pathname, url), { signal: AbortSignal.timeout(30_000) });

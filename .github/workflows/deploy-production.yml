@@ -8,6 +8,11 @@ on:
         description: Exact reviewed commit on main
         required: true
         type: string
+      rollback_drill:
+        description: Verify a safe release, then deliberately exercise rollback and recovery
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: production
@@ -29,6 +34,7 @@ jobs:
       TARGET_SHA: ${{ inputs.target_sha }}
       AUDIT_UNTIL: ${{ vars.AUTOMATION_BILLING_VERIFIED_UNTIL }}
       AUTOMATION_HALTED: ${{ vars.AUTOMATION_HALTED }}
+      AUTOMATION_PRODUCTION_ALIAS: ${{ vars.AUTOMATION_PRODUCTION_ALIAS }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TELEMETRY_DISABLED: '1'
@@ -111,7 +117,13 @@ jobs:
         id: verify
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: node scripts/automation/deployment.mjs verify
+          ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
+        run: |
+          node scripts/automation/deployment.mjs verify
+          if [ "$ROLLBACK_DRILL" = "true" ]; then
+            echo "Controlled rollback drill: production smoke passed; exercising failure recovery."
+            exit 1
+          fi
       - name: Close verified release lease
         uses: actions/github-script@v7
         env:
