@@ -79,6 +79,39 @@ function noteInLane(page: Page, kind: string, noteId: string) {
   return page.locator(`[data-lane="${kind}"] [data-note-id="${noteId}"]`);
 }
 
+test("Problem削除は確認まで保存され、キャンセルと確定を選べる", async ({ page }) => {
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+  const note = noteInLane(page, "PROBLEM", ids.prob1);
+  const trigger = note.getByRole("button", { name: "削除", exact: true });
+  await expect(note).toBeVisible();
+  // 操作前と確認表示後。旧実装の画像は添付 baseline を参照する。
+  await page.screenshot({ path: "e2e/__screens__/note-delete-before.png", fullPage: true });
+  await trigger.click();
+  const confirmation = note.getByRole("form", { name: "付箋の削除確認" });
+  await expect(confirmation).toContainText(CONTENT.prob1);
+  await expect(confirmation).toContainText("削除すると元に戻せません");
+  await expect(confirmation.getByRole("button", { name: "キャンセル" })).toBeFocused();
+  expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).not.toBeNull();
+  await page.screenshot({ path: "e2e/__screens__/note-delete-after.png", fullPage: true });
+
+  await page.keyboard.press("Enter"); // 初期フォーカスは安全なキャンセル
+  await expect(confirmation).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await page.reload();
+  await expect(note).toBeVisible();
+  expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).not.toBeNull();
+
+  await trigger.click();
+  await confirmation.getByRole("button", { name: "削除する", exact: true }).click();
+  await expect(note).toHaveCount(0, { timeout: 40_000 });
+  expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).toBeNull();
+  await page.reload();
+  await expect(note).toHaveCount(0);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+  await expect(noteInLane(page, "KEEP", ids.keep2)).toBeVisible();
+});
+
 // キーボードセンサでドラッグ: ハンドルにフォーカス→Space→矢印→Space
 async function keyboardDrag(page: Page, noteId: string, keys: string[]) {
   const handle = grip(page, noteId);

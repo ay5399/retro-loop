@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useOptimistic, useState, useTransition } from "react";
+import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -686,6 +686,8 @@ function SortableNote({
   } = useSortable({ id: note.id });
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
 
   // 未投票 かつ 上限到達 のときだけ投票不可（投票済みは常に取り消せる）。
   const voteDisabled = atVoteLimit && !note.hasVoted;
@@ -789,12 +791,48 @@ function SortableNote({
             >
               色
             </button>
-            <form action={deleteNote.bind(null, teamId, retroId, note.id)}>
-              <button type="submit" className="hover:text-problem">
-                削除
-              </button>
-            </form>
+            <button
+              ref={deleteButton}
+              type="button"
+              aria-expanded={deleteOpen}
+              aria-controls={`delete-${note.id}`}
+              onClick={() => setDeleteOpen((open) => !open)}
+              className="hover:text-problem"
+            >
+              削除
+            </button>
           </div>
+
+          {deleteOpen && (
+            <form
+              id={`delete-${note.id}`}
+              action={deleteNote.bind(null, teamId, retroId, note.id)}
+              aria-label="付箋の削除確認"
+              aria-describedby={`delete-warning-${note.id}`}
+              className="mt-3 rounded-lg border border-line bg-surface p-3 text-xs"
+            >
+              <p id={`delete-warning-${note.id}`}>
+                この付箋を削除しますか？削除すると元に戻せません。
+              </p>
+              <p className="mt-2 whitespace-pre-wrap break-words text-ink">{note.content}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  autoFocus
+                  className="btn btn-sm"
+                  onClick={() => {
+                    setDeleteOpen(false);
+                    deleteButton.current?.focus();
+                  }}
+                >
+                  キャンセル
+                </button>
+                <button type="submit" className="btn btn-sm text-problem">
+                  削除する
+                </button>
+              </div>
+            </form>
+          )}
 
           {pickerOpen && (
             // 不透明な surface 背景＋薄いボーダー・角丸・小さな影で、

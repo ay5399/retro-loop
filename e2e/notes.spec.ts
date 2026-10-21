@@ -54,6 +54,7 @@ test("KPT付箋を追加・編集・削除できる", async ({ page }) => {
   // 削除：Problem の付箋を消す
   const probNote = page.locator("li", { hasText: "デプロイ失敗が多い" });
   await probNote.getByRole("button", { name: "削除" }).click();
+  await probNote.getByRole("button", { name: "削除する", exact: true }).click();
   await expect(noteText(page, "デプロイ失敗が多い")).toHaveCount(0);
 
   await page.screenshot({ path: "e2e/__screens__/kpt-after-edit-delete.png", fullPage: true });
