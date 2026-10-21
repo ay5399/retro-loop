@@ -1,8 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+test('promotion validates the project and SHA and switches a rollback-pinned target', async () => {
+  const originalEnv = { ...process.env }, originalArgv = [...process.argv], originalFetch = globalThis.fetch, cwd = process.cwd();
+  const dir = await mkdtemp(path.join(tmpdir(), 'retro-promote-test-'));
+  const sha = 'a'.repeat(40), posts = [];
+  let projectId = 'wrong-project', promoted = false;
+  try {
+    await writeFile(path.join(dir, '.deployment-url'), 'https://retro-new.vercel.app');
+    process.chdir(dir);
+    Object.assign(process.env, { VERCEL_PROJECT_ID: 'test-project', VERCEL_ORG_ID: 'test-team', TARGET_SHA: sha });
+    process.argv[2] = 'promote';
+    globalThis.fetch = async (url, options) => {
+      const pathname = new URL(url).pathname;
+      if (options.method === 'POST') { posts.push(pathname); promoted = true; return { ok: true, status: 200 }; }
+      if (pathname === '/v13/deployments/retro-new.vercel.app') return { ok: true, json: async () => ({ id: 'dpl_new', projectId, readyState: 'READY', target: 'production', meta: { automationReleaseSha: sha } }) };
+      if (pathname === '/v9/projects/test-project') return { ok: true, json: async () => ({ targets: { production: { id: promoted ? 'dpl_new' : 'dpl_old' } } }) };
+      throw new Error('Unexpected API');
+    };
+    await assert.rejects(import(`./deployment.mjs?case=promote-project-${Date.now()}`), /does not match/);
+    projectId = 'test-project'; process.env.TARGET_SHA = 'b'.repeat(40);
+    await assert.rejects(import(`./deployment.mjs?case=promote-sha-${Date.now()}`), /does not match/);
+    assert.deepEqual(posts, []);
+    process.env.TARGET_SHA = sha;
+    await import(`./deployment.mjs?case=promote-valid-${Date.now()}`);
+    assert.deepEqual(posts, ['/v10/projects/test-project/promote/dpl_new']);
+  } finally {
+    process.chdir(cwd); globalThis.fetch = originalFetch; process.argv = originalArgv;
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+    assert.ok(path.resolve(dir).startsWith(path.resolve(tmpdir()) + path.sep));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('rollback uses project-only APIs and rejects a different project or SHA before mutation', async () => {
   const originalEnv = { ...process.env }, originalArgv = [...process.argv], originalFetch = globalThis.fetch;
