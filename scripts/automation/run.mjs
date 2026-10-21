@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir, open, stat, readdir, cp, lstat, rename } fr
 import path from 'node:path';
 import { userInfo } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
-import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, requireReview, approvalMatches, reserve } from './core.mjs';
+import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, requireReview, approvalMatches, reserve, needsLiveAiVerification } from './core.mjs';
 import { createAppAuth } from './github-app.mjs';
 
 const stateDir = process.env.RETRO_AUTOMATION_HOME;
@@ -247,16 +247,23 @@ async function develop(kind) {
     const blocked = changedPathsBlocked(files, policy);
     if (blocked.length) throw new Error(`Protected files changed: ${blocked.join(', ')}`);
     const staged = await git(['diff', '--cached'], dir);
+    const runtimeDiff = await git(['diff', '--cached', '--', 'src', 'public', 'e2e'], dir);
     if (/^\+[^+].*["']use server["']/m.test(staged)) throw new Error('New server actions require owner approval');
     if (/(?:AIza[\w-]{25,}|sk-(?:ant-)?[\w-]{20,}|gh[pousr]_[\w]{20,})/.test(staged)) throw new Error('Possible secret in diff');
     if (/^\+.*(?:test\.(?:skip|fixme)|test\.describe\.skip)/m.test(staged) || (await git(['diff', '--cached', '--diff-filter=D', '--name-only'], dir)).split('\n').some(f => f.startsWith('e2e/'))) throw new Error('Weakening browser tests requires owner approval');
-    if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(staged)) throw new Error('New external calls or runtime credential access require owner approval');
+    if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(runtimeDiff)) throw new Error('New external calls or runtime credential access require owner approval');
     const testDiff = await git(['diff', '--cached', '--', 'e2e'], dir);
     if (/^-[^-].*(?:expect\(|assert\.|test\()/m.test(testDiff)) throw new Error('Removing test coverage requires owner approval');
     await git(['commit', '-m', `auto: ${result.title.replaceAll('\n', ' ').slice(0, 100)}`], dir);
     const sha = await git(['rev-parse', 'HEAD'], dir);
     // Review before publishing and executing the candidate in GitHub Actions.
     const verdict = await review(dir, sha, result);
+    if (needsLiveAiVerification(files)) {
+      if (policy.liveAiVerification?.enabled !== true) throw new Error('Live AI UI verification is required for this change but is not enabled');
+      await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--expected-sha', sha, '--output-dir', path.join(runDir, 'live-ai')], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: 420_000, log: path.join(runDir, 'live-ai.log') });
+      const live = await json(path.join(runDir, 'live-ai/result.json'), {});
+      if (live.sha !== sha || live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Live AI browser verification failed');
+    }
     await git(['push', '-u', 'origin', branch], dir);
     await checks(dir, `${kind}-after`);
     for (const image of result.screenshots) {

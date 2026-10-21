@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { slot, mutationDue, approvalMatches, requireReview, reserve, auditProblems, policyHash, changedPathsBlocked } from './core.mjs';
+import { slot, mutationDue, approvalMatches, requireReview, reserve, auditProblems, policyHash, changedPathsBlocked, needsLiveAiVerification } from './core.mjs';
 const policy = JSON.parse(readFileSync(new URL('../../automation/policy.json', import.meta.url)));
+test('AI experience and shared UI edits require live verification; docs use mock CI', () => {
+  assert.equal(needsLiveAiVerification(['src/app/teams/[teamId]/retros/[retroId]/ai-chat.tsx']), true);
+  assert.equal(needsLiveAiVerification(['src/app/api/chat/route.ts']), true);
+  assert.equal(needsLiveAiVerification(['src/components/loop.tsx']), true);
+  assert.equal(needsLiveAiVerification(['src/app/teams/[teamId]/retros/[retroId]/kpt-board.client.tsx']), true);
+  assert.equal(needsLiveAiVerification(['docs/BRIEF.md']), false);
+});
 test('JST slots and latest missed slot across midnight', () => {
   assert.equal(slot(new Date('2026-10-19T20:00:00Z')), '2026-10-20-5');
   assert.equal(slot(new Date('2026-10-19T04:00:00Z')), '2026-10-19-13');
@@ -33,9 +40,13 @@ test('unknown costs, paid usage, duplicates and accumulated reservations stop ex
 test('unverified/expired billing and changed policy stop execution', () => {
   assert.ok(auditProblems(policy, {}).length);
   const now = new Date('2026-10-19T04:00:00Z');
-  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelGitDeploymentsDisabled: true,
+  const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelAutomationTokenVerified: true, vercelGitDeploymentsDisabled: true,
     services: Object.fromEntries(policy.services.map(s => [s, { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'provider settings checked' }])) };
   assert.deepEqual(auditProblems(policy, audit, now), []);
+  audit.vercelAutomationTokenVerified = false;
+  assert.ok(auditProblems(policy, audit, now).some(p => p.includes('workflow authentication')));
+  assert.equal(auditProblems(policy, audit, now, 'development').some(p => p.includes('workflow authentication')), false);
+  audit.vercelAutomationTokenVerified = true;
   assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
   assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'updated' } }, audit, now), []);
   assert.ok(auditProblems({ ...policy, operatingLimitYen: 700 }, audit, now).length);
@@ -50,7 +61,7 @@ test('development can proceed without production audit; disabled services do not
   assert.ok(auditProblems(policy, audit, now, 'development').some(p => p.includes('Vercel')));
   audit.vercelGitDeploymentsDisabled = true;
   audit.policyHashes.release = policyHash(policy);
-  Object.assign(audit, { productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true });
+  Object.assign(audit, { productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelAutomationTokenVerified: true });
   for (const s of ['vercel', 'neon']) audit.services[s] = { mode: 'free-hard-stop', verifiedAt: now.toISOString(), evidence: 'checked' };
   for (const s of ['gemini', 'resend', 'devlake']) audit.services[s] = { mode: 'disabled', evidence: 'No call path in this automation' };
   assert.deepEqual(auditProblems(policy, audit, now), []);
@@ -70,4 +81,5 @@ test('autonomous edits cannot change policy, authentication, migrations or workf
   assert.deepEqual(changedPathsBlocked(['src/components/loop.tsx', 'docs/UI_GUIDELINES.md'], policy), []);
   assert.equal(changedPathsBlocked(['automation/policy.json', 'src/auth.ts', '.github/workflows/ci.yml', 'prisma/schema.prisma', 'package.json'], policy).length, 5);
   assert.equal(changedPathsBlocked(['CLAUDE.md', 'src/instrumentation.ts', 'src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/AUTONOMOUS_IMPROVEMENT.md'], policy).length, 5);
+  assert.equal(changedPathsBlocked(['lib/external.ts'], policy).length, 1);
 });

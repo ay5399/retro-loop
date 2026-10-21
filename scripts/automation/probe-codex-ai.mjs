@@ -1,19 +1,26 @@
 // Explicit, bounded live inference probe. No production data, database or app code.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 const home = process.env.RETRO_AUTOMATION_HOME;
+if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Live verification requires Node.js 24 or later, matching .nvmrc');
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
 const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
-const dir = path.join(home, 'live-ai-probe');
+const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
+const sourceRoot = path.resolve(arg('--source') ?? installation.repositoryPath);
+const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8', windowsHide: true }).trim();
+if (arg('--expected-sha') && (sha !== arg('--expected-sha') || execFileSync('git', ['status', '--porcelain'], { cwd: sourceRoot, encoding: 'utf8', windowsHide: true }).trim())) throw new Error('Candidate must be the clean, independently reviewed SHA');
+const { ACTION_GUIDANCE } = await import(pathToFileURL(path.join(sourceRoot, 'src/lib/llm/chat-guidance.ts')).href);
+const dir = path.resolve(arg('--output-dir') ?? path.join(home, 'live-ai-probe'));
 await mkdir(dir, { recursive: true });
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/TOKEN|SECRET|API_KEY|DATABASE_URL|DIRECT_URL|CLAUDE_CODE_USE_|ANTHROPIC_|OPENAI_|GIT_CONFIG_/i.test(key)));
 const cmd = installation.commands.codex;
 const proc = spawn(cmd.file, [...cmd.args, 'app-server', '--listen', 'stdio://'], { cwd: dir, env, windowsHide: true, shell: false });
 const pending = new Map();
 let id = 0, active;
-const report = { at: new Date().toISOString(), route: 'local-codex-app-server', scope: 'Synthetic dialogue only; not the deployed Gemini provider or browser UX', transcripts: [] };
+const report = { at: new Date().toISOString(), sha, route: 'local-codex-app-server', scope: 'Synthetic dialogue only; not the deployed Gemini provider or browser UX', transcripts: [] };
 const send = msg => proc.stdin.write(JSON.stringify(msg) + '\n');
 const rpc = (method, params = {}) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); send({ id: requestId, method, params }); });
 function abort(error) { for (const p of pending.values()) p.reject(error); pending.clear(); if (active) { active.reject(error); active = null; } }
@@ -32,6 +39,7 @@ createInterface({ input: proc.stdout }).on('line', line => {
   if (msg.method === 'item/agentMessage/delta') {
     active.text += msg.params.delta;
     active.firstDeltaMs ??= Date.now() - active.started;
+    active.onDelta?.(msg.params.delta);
   }
   if (msg.method === 'turn/completed') {
     const current = active; active = null;
@@ -39,7 +47,8 @@ createInterface({ input: proc.stdout }).on('line', line => {
     else current.resolve({ text: current.text, firstDeltaMs: current.firstDeltaMs, elapsedMs: Date.now() - current.started });
   }
 });
-const timer = setTimeout(() => { abort(new Error('Probe exceeded 180 seconds')); proc.kill(); }, 180_000);
+const controller = new AbortController(), expiresAt = Date.now() + 330_000;
+const timer = setTimeout(() => { controller.abort(); abort(new Error('Probe exceeded 330 seconds')); proc.kill(); }, 330_000);
 try {
   await rpc('initialize', { clientInfo: { name: 'retroloop_live_probe', title: 'RetroLoop live dialogue probe', version: '1.0.0' } });
   send({ method: 'initialized', params: {} });
@@ -51,13 +60,22 @@ try {
   if (!model) throw new Error('No model returned');
   report.model = model.model ?? model.id;
   const thread = await rpc('thread/start', { model: report.model, cwd: dir, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: true,
-    baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。' });
-  for (const input of ['レビュー待ちが長いので「気をつける」を次のアクションにしようと思います。具体化を手伝って。', '自分でできることにしたい。担当者や期限はまだ決めていません。勝手に決めず、必要なことを質問して。', '担当は私。来週月曜の朝会後に、自分のPRへレビュー希望時刻を記載してチームに共有します。保存前に確認できる形でまとめて。']) {
-    const completed = new Promise((resolve, reject) => { active = { resolve, reject, threadId: thread.thread.id, text: '', started: Date.now() }; });
+    baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。\n' + ACTION_GUIDANCE });
+  const inputs = ['レビュー待ちが長いので「気をつける」を次のアクションにしようと思います。具体化を手伝って。', '自分でできることにしたい。担当者や期限はまだ決めていません。勝手に決めず、必要なことを質問して。', '担当は私。2026年10月26日の朝会後に、自分のPRへレビュー希望時刻を記載してチームに共有します。保存前に確認できる形でまとめて。'];
+  const complete = async (input, onDelta) => {
+    const completed = new Promise((resolve, reject) => { active = { resolve, reject, onDelta, threadId: thread.thread.id, text: '', started: Date.now() }; });
     const start = rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: input }] });
     const [, output] = await Promise.all([start, completed]);
     if (!output.text.trim()) throw new Error('Model returned no visible text');
-    report.transcripts.push({ input, ...output });
+    return output;
+  };
+  if (process.argv.includes('--browser')) {
+    report.scope = 'Real AiChat and KptBoard UI; real Plus inference; synthetic persistence, no production DB';
+    report.excluded = 'Production chat route, Gemini provider, authentication and PostgreSQL persistence are covered separately by mock CI, not this live fixture';
+    const { runBrowserProbe } = await import('./verify-live-chat-ui.mjs');
+    await runBrowserProbe({ complete, dir, report, inputs, sourceRoot, signal: controller.signal, expiresAt });
+  } else {
+    for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }
   report.status = 'passed';
 } catch (error) { report.status = 'failed'; report.reason = error.message; process.exitCode = 1; }

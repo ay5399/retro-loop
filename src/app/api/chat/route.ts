@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { buildRetroSummary, buildRecurringIssues } from "@/lib/llm/retro-tools";
 import { allowRequest, externalServiceEnabled, isMockLlm } from "@/lib/service-policy";
+import { ACTION_GUIDANCE } from "@/lib/llm/chat-guidance";
 
 // ふりかえり画面のAIチャットアシスタント（ストリーミング）。
 // Vercel AI SDK（ai@7 / @ai-sdk/react の useChat）と接続する Route Handler。
@@ -79,6 +80,7 @@ export async function POST(req: Request) {
     "以下は今回のKPT付箋です:",
     notesText,
     "チームの総括・助言・質問対応を日本語で簡潔に行ってください。",
+    ACTION_GUIDANCE,
     "",
     "ツールを使えます（必ず日本語で自然に結果を要約して返すこと）:",
     "- summarizeRetro: 「今回の総括」「まとめて」等を求められたら使う。投票数の多い付箋を重視して要約する。",

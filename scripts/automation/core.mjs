@@ -52,6 +52,7 @@ export function auditProblems(policy, audit, now = new Date(), stage = 'release'
   // Publishing a candidate branch can trigger Vercel Git integration too.
   if (audit.vercelGitDeploymentsDisabled !== true) errors.push('Duplicate Vercel Git deployments have not been disabled.');
   if (stage === 'release') {
+    if (audit.vercelAutomationTokenVerified !== true) errors.push('Vercel production workflow authentication has not been verified. Development may continue; merging and deployment are deferred.');
     if (audit.productionLiveCallsDisabled !== true) errors.push('Production external-call gates have not been verified.');
     if (audit.rollbackLiveCallsDisabled !== true) errors.push('Rollback deployments must also have live API/email access disabled.');
   }
@@ -69,6 +70,9 @@ export function changedPathsBlocked(paths, policy) {
 }
 export function requireReview(review, sha) {
   if (review.sha !== sha || review.verdict !== 'approve' || !review.reason?.trim()) throw new Error('Claude did not approve this exact commit.');
+}
+export function needsLiveAiVerification(paths) {
+  return paths.some(p => p.startsWith('src/app/teams/[teamId]/retros/[retroId]/') || p.startsWith('src/components/') || p.startsWith('src/hooks/') || p.startsWith('src/lib/') || p === 'src/app/globals.css' || p === 'src/app/api/chat/route.ts' || /^scripts\/automation\/(?:probe-codex-ai|verify-live-chat-ui|live-ui-)/.test(p));
 }
 // Reserve the worst-case cost BEFORE a call; unknown costs never become free.
 export function reserve(ledger, id, maxYen, policy) {
