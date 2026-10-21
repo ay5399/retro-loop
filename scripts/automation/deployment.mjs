@@ -16,8 +16,8 @@ async function verifySafeRuntime(url, expectedSha) {
   if (!/^[a-f0-9]{40}$/.test(health.sha ?? '') || (expectedSha && health.sha !== expectedSha) || health.liveLlm !== false || health.liveEmail !== false || health.keysPresent !== false) throw new Error('Runtime SHA or external-call gates do not match the release policy');
 }
 function productionUrl(project) {
-  const alias = project.targets?.production?.alias?.find(a => /^[a-zA-Z0-9.-]+\.vercel\.app$/.test(a));
-  if (!alias) throw new Error('Production alias unavailable');
+  const alias = process.env.AUTOMATION_PRODUCTION_ALIAS;
+  if (!/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(alias ?? '') || !project.targets?.production?.alias?.includes(alias)) throw new Error('Configured production alias unavailable');
   return `https://${alias}`;
 }
 if (action === 'previous') {
