@@ -55,6 +55,19 @@ if (action === 'previous') {
   await verifySafeRuntime(await productionUrl(data), previousSha);
   await appendFile(process.env.GITHUB_OUTPUT, `previous=https://${previous}\n`);
   await appendFile(process.env.GITHUB_OUTPUT, `previous_sha=${previousSha}\n`);
+} else if (action === 'promote') {
+  const deployed = (await readFile('.deployment-url', 'utf8')).trim();
+  if (!/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(deployed) || !/^[a-f0-9]{40}$/.test(process.env.TARGET_SHA ?? '')) throw new Error('Invalid promotion target or SHA');
+  const data = await vercel(`/v13/deployments/${encodeURIComponent(new URL(deployed).hostname)}?teamId=${encodeURIComponent(team)}`);
+  if (data.projectId !== project || data.meta?.automationReleaseSha !== process.env.TARGET_SHA || data.readyState !== 'READY' || data.target !== 'production' || !/^dpl_[a-zA-Z0-9]+$/.test(data.id ?? '')) throw new Error('Promotion target does not match the ready production release');
+  await vercel(`/v10/projects/${encodeURIComponent(project)}/promote/${encodeURIComponent(data.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
+  const until = Date.now() + 60_000;
+  while (true) {
+    const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
+    if (current.targets?.production?.id === data.id) break;
+    if (Date.now() >= until) throw new Error('Promotion did not become production within 60 seconds');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
 } else if (action === 'verify') {
   const deployed = (await readFile('.deployment-url', 'utf8')).trim();
   if (!/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(deployed)) throw new Error('Invalid deployment URL');
