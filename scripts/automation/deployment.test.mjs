@@ -4,6 +4,37 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+test('rollback uses project-only APIs and rejects a different project or SHA before mutation', async () => {
+  const originalEnv = { ...process.env }, originalArgv = [...process.argv], originalFetch = globalThis.fetch;
+  const sha = 'a'.repeat(40), posts = [];
+  let projectId = 'test-project', restored = false;
+  try {
+    Object.assign(process.env, { VERCEL_PROJECT_ID: 'test-project', VERCEL_ORG_ID: 'test-team', VERCEL_TOKEN: 'test-token', PREVIOUS: 'https://retro-safe-team.vercel.app', PREVIOUS_SHA: sha });
+    process.argv[2] = 'rollback';
+    globalThis.fetch = async (url, options) => {
+      const pathname = new URL(url).pathname;
+      if (options.method === 'POST') { posts.push({ pathname, body: options.body }); restored = true; return { ok: true, status: 200 }; }
+      if (pathname === '/v13/deployments/retro-safe-team.vercel.app') return { ok: true, json: async () => ({ id: 'dpl_safe', projectId, meta: { automationReleaseSha: sha } }) };
+      if (pathname === '/v9/projects/test-project') return { ok: true, json: async () => ({ targets: { production: { id: restored ? 'dpl_safe' : 'dpl_new' } } }) };
+      throw new Error('Unexpected non-project API request');
+    };
+    projectId = 'another-project';
+    await assert.rejects(import(`./deployment.mjs?case=rollback-project-${Date.now()}`), /does not match/);
+    projectId = 'test-project'; process.env.PREVIOUS_SHA = 'b'.repeat(40);
+    await assert.rejects(import(`./deployment.mjs?case=rollback-sha-${Date.now()}`), /does not match/);
+    assert.deepEqual(posts, []);
+    process.env.PREVIOUS_SHA = sha;
+    await import(`./deployment.mjs?case=rollback-valid-${Date.now()}`);
+    assert.deepEqual(posts, [{ pathname: '/v9/projects/test-project/rollback/dpl_safe', body: '{}' }]);
+    await import(`./deployment.mjs?case=rollback-again-${Date.now()}`);
+    assert.equal(posts.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+    Object.assign(process.env, originalEnv); process.argv = originalArgv;
+  }
+});
+
 test('release requires safe rollback runtime at its public alias and exact SHA', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'retro-release-test-'));
   const originalEnv = { ...process.env }, originalArgv = [...process.argv], originalFetch = globalThis.fetch;

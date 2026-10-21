@@ -4,10 +4,27 @@ const action = process.argv[2];
 const token = process.env.VERCEL_TOKEN;
 const project = process.env.VERCEL_PROJECT_ID;
 const team = process.env.VERCEL_ORG_ID;
-async function vercel(endpoint) {
-  const response = await fetch(`https://api.vercel.com${endpoint}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
+async function vercel(endpoint, { method = 'GET', body } = {}) {
+  const response = await fetch(`https://api.vercel.com${endpoint}`, { method, headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error(`Vercel API failed: ${response.status}`);
+  if (response.status === 204 || method === 'POST') return {};
   return response.json();
+}
+async function rollbackPrevious() {
+  const previous = process.env.PREVIOUS, sha = process.env.PREVIOUS_SHA;
+  if (!/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(previous ?? '') || !/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('Invalid rollback target or SHA');
+  const deployment = await vercel(`/v13/deployments/${encodeURIComponent(new URL(previous).hostname)}?teamId=${encodeURIComponent(team)}`);
+  if (deployment.projectId !== project || deployment.meta?.automationReleaseSha !== sha || !/^dpl_[a-zA-Z0-9]+$/.test(deployment.id ?? '')) throw new Error('Rollback target does not match the project and verified SHA');
+  const before = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
+  if (before.targets?.production?.id === deployment.id) { console.log('Previous production target is already restored'); return; }
+  await vercel(`/v9/projects/${encodeURIComponent(project)}/rollback/${encodeURIComponent(deployment.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
+  const until = Date.now() + 60_000;
+  while (Date.now() < until) {
+    const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
+    if (current.targets?.production?.id === deployment.id) { console.log('Previous production target restored through the project API'); return; }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error('Rollback target did not become production within 60 seconds');
 }
 async function verifySafeRuntime(url, expectedSha) {
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -53,6 +70,8 @@ if (action === 'previous') {
     if (!response.ok || !text.includes('<html') || !/RetroLoop|ログイン/.test(text)) throw new Error(`Production smoke failed: ${pathname} (${response.status})`);
   }
   await appendFile(process.env.GITHUB_STEP_SUMMARY, `Production smoke passed: ${url}\nCommit: ${process.env.TARGET_SHA}\n`);
+} else if (action === 'rollback') {
+  await rollbackPrevious();
 } else if (action === 'check-rollback') {
   const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   await appendFile(process.env.GITHUB_OUTPUT, `restored=${`https://${current.targets?.production?.url}` === process.env.PREVIOUS}\n`);

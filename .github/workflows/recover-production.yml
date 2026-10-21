@@ -57,7 +57,8 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           PREVIOUS: ${{ steps.lease.outputs.previous }}
-        run: npx vercel@64.2.0 rollback "$PREVIOUS" --yes --token="$VERCEL_TOKEN" --timeout 60s
+          PREVIOUS_SHA: ${{ steps.lease.outputs.previous_sha }}
+        run: node scripts/automation/deployment.mjs rollback
       - name: Verify recovered production
         if: steps.lease.outputs.recover == 'true'
         env:

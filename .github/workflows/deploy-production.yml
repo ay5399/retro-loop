@@ -135,8 +135,10 @@ jobs:
         id: rollback
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+          PREVIOUS_SHA: ${{ steps.previous.outputs.previous_sha }}
         if: ${{ always() && steps.previous.outcome == 'success' && steps.deploy.outcome != 'skipped' && (steps.deploy.outcome != 'success' || steps.verify.outcome != 'success') }}
-        run: npx vercel@64.2.0 rollback '${{ steps.previous.outputs.previous }}' --yes --token="$VERCEL_TOKEN" --timeout 60s
+        run: node scripts/automation/deployment.mjs rollback
       - name: Verify rollback
         if: ${{ always() && steps.rollback.outcome == 'success' }}
         env:
