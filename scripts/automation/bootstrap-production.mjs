@@ -26,8 +26,11 @@ const args = ['deploy', '.', '--prod', '--skip-domain', '--project', 'retro', '-
 for (const [key, value] of Object.entries(env)) args.push('--env', `${key}=${value}`);
 for (const [key, value] of Object.entries({ DATABASE_URL: 'postgresql://build:build@127.0.0.1:5432/build', DIRECT_URL: 'postgresql://build:build@127.0.0.1:5432/build', AUTH_SECRET: 'build-only-secret', AUTH_URL: 'http://localhost:3000', ALLOW_LIVE_LLM: 'false', ALLOW_LIVE_EMAIL: 'false', GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', AUTH_RESEND_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '' })) args.push('--build-env', `${key}=${value}`);
 const output = vercel(args);
-const url = output.match(/https:\/\/[a-zA-Z0-9.-]+\.vercel\.app/)?.[0];
-if (!url) throw new Error('Deployment URL missing');
+const hostname = output.match(/(?:https:\/\/)?([a-zA-Z0-9-]+\.vercel\.app)/)?.[1];
+if (!hostname) throw new Error('Deployment URL missing');
+const url = `https://${hostname}`;
+const deployment = JSON.parse(vercel(['api', `/v13/deployments/${hostname}`]));
+if (deployment.meta?.automationReleaseSha !== sha || deployment.projectId !== project.id) throw new Error('Deployment metadata does not match reviewed project and SHA');
 const check = JSON.parse(vercel(['curl', `${url}/api/health`, '--', '--silent', '--show-error', '--fail', '--header', `Authorization: Bearer ${health.token}`]));
 if (check.sha !== sha || check.liveLlm !== false || check.liveEmail !== false || check.keysPresent !== false) throw new Error('Candidate runtime is not safe; not promoted');
 vercel(['promote', url, '--yes']);
