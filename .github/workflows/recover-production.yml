@@ -35,7 +35,7 @@ jobs:
             await github.rest.issues.create({ ...context.repo, title: '[Incident]: interrupted release requires recovery', labels: ['type:incident'], body: `Run: ${process.env.FAILED_RUN}\nRelease lease: #${lease.number}\nRecovery is running; further releases remain blocked until this incident is closed by the owner.` });
             core.setOutput('recover', 'true'); core.setOutput('previous', data.previous); core.setOutput('issue', lease.number);
             core.setOutput('previous_sha', data.previousSha);
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.lease.outputs.recover == 'true'
         with:
           ref: main
