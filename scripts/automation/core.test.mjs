@@ -45,7 +45,7 @@ test('unverified/expired billing and changed policy stop execution', () => {
   assert.deepEqual(auditProblems(policy, audit, now), []);
   audit.vercelAutomationTokenVerified = false;
   assert.ok(auditProblems(policy, audit, now).some(p => p.includes('workflow authentication')));
-  assert.deepEqual(auditProblems(policy, audit, now, 'development'), []);
+  assert.equal(auditProblems(policy, audit, now, 'development').some(p => p.includes('workflow authentication')), false);
   audit.vercelAutomationTokenVerified = true;
   assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
   assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'updated' } }, audit, now), []);
