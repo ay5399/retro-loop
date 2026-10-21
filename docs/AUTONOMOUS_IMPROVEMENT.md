@@ -110,6 +110,8 @@ node scripts/automation/record-audit.mjs C:/private/verified-retro-audit.json
 
 安全な基準版の確立後、Deploy Productionを `rollback_drill=true` で明示実行すると、正常な公開smokeの直後に意図的に失敗させる。通常のrollback、旧SHAの安全性確認、独立したRecover Interrupted Productionによるlease解放を確認するための訓練である。結果は意図的にfailureとなりIncidentで後続配信が止まる。所有者が旧SHA・外部呼び出し無効・公開画面の復旧とlease解放を確認し、訓練で作られたIncidentだけをcloseして解除する。通常配信の既定値はfalse。
 
+本番の安全性と、GitHubからVercelへ配信できる認証は別々に確認する。`audit.json`の`vercelAutomationTokenVerified`は、production環境Secret `VERCEL_TOKEN`でworkflowのVercel APIアクセスを実測できた場合だけtrueにする。falseまたは未設定なら、開発・レビュー・CI・PR作成は進め、マージと配信を保留する。2026-10-21の旧Secretは403で、ローカルCLI認証からのトークン作成も403だった。[VercelのTokens画面](https://vercel.com/account/tokens)で所有者がretroプロジェクト用トークンを作成し、production環境Secretへ登録して再確認する。CLIの短期トークンは恒久Secretとして代用しない。
+
 通常配信は配信前にこの安全な基準版の公開healthと、Vercelの対象デプロイのSHAメタデータを照合する。復旧後も同じSHAに戻ったことを検証する。実行枠消費済みでも手動で通し実行する場合は、`node "$env:RETRO_AUTOMATION_HOME/runtime/run.mjs" --manual-run`を使う。定期枠の重複防止は変更しない。`--manual-run`は通常改善だけを実行する。
 
 ```powershell
