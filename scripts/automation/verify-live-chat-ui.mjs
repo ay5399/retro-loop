@@ -7,16 +7,22 @@ import { fileURLToPath } from 'node:url';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { chromium, expect } from '@playwright/test';
 const root = fileURLToPath(new URL('../../', import.meta.url));
+export function assertSafeStylesheet(css) {
+  const postcss = createRequire(path.join(root, 'package.json'))('postcss');
+  postcss.parse(css).walkAtRules(rule => {
+    if (!['import', 'media', 'theme', 'layer', 'apply', 'supports', 'keyframes', 'container', 'property', 'starting-style', 'custom-variant', 'utility', 'variant', 'font-face'].includes(rule.name) || (rule.name === 'import' && !/^(?:"tailwindcss"|'tailwindcss')$/.test(rule.params))) throw new Error('Candidate CSS may not load scripts, configuration or additional files');
+  });
+}
 
 export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoot = root, signal, expiresAt = Date.now() + 330_000 }) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   const { build } = localRequire('esbuild');
   const postcss = localRequire('postcss'), tailwind = localRequire('@tailwindcss/postcss');
-  const candidateCss = await readFile(path.join(sourceRoot, 'src/app/globals.css'), 'utf8');
-  postcss.parse(candidateCss).walkAtRules(rule => {
-    if (!['import', 'media', 'theme', 'layer', 'apply', 'supports', 'keyframes', 'container', 'property', 'starting-style'].includes(rule.name) || (rule.name === 'import' && rule.params !== '"tailwindcss"')) throw new Error('Candidate CSS may not load scripts, configuration or additional files');
-  });
-  const sourceDir = await realpath(path.join(sourceRoot, 'src'));
+  const sourceDir = path.join(await realpath(sourceRoot), 'src');
+  const cssFile = await realpath(path.join(sourceRoot, 'src/app/globals.css'));
+  if (!cssFile.startsWith(sourceDir + path.sep)) throw new Error('Candidate CSS resolves outside source');
+  const candidateCss = await readFile(cssFile, 'utf8');
+  assertSafeStylesheet(candidateCss);
   const modulesDir = await realpath(path.join(root, 'node_modules'));
   const fixtureFiles = await Promise.all(['live-ui-entry.tsx', 'live-ui-store.ts'].map(f => realpath(path.join(root, 'scripts/automation', f))));
   await build({ absWorkingDir: root, nodePaths: [path.join(root, 'node_modules')], tsconfigRaw: { compilerOptions: { baseUrl: sourceRoot, paths: { '@/*': ['src/*'] } } }, entryPoints: ['scripts/automation/live-ui-entry.tsx'], outfile: path.join(dir, 'app.js'), bundle: true, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'synthetic-actions', setup(b) {
