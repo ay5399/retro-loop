@@ -74,10 +74,10 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
     const lane = page.locator('[data-lane="TRY"]');
     await lane.getByPlaceholder('Try を追加').fill(saved);
     await lane.getByRole('button', { name: '＋ 追加', exact: true }).click();
-    await expect(lane.getByText(saved, { exact: true })).toBeVisible();
+    await expect(lane.locator('[data-note-id] p').filter({ hasText: saved })).toBeVisible();
     await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
     await page.reload();
-    await expect(page.locator('[data-lane="TRY"]').getByText(saved, { exact: true })).toBeVisible();
+    await expect(page.locator('[data-lane="TRY"] [data-note-id] p').filter({ hasText: saved })).toBeVisible();
     report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, liveCalls: count };
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
 }
