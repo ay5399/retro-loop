@@ -79,6 +79,52 @@ function noteInLane(page: Page, kind: string, noteId: string) {
   return page.locator(`[data-lane="${kind}"] [data-note-id="${noteId}"]`);
 }
 
+test("Problemの削除は確認まで保存を維持し、キャンセル・Escapeで取り消せる", async ({ page }) => {
+  const problem = "レビュー待ちで自分の作業が止まる";
+  await prisma.note.update({ where: { id: ids.prob1 }, data: { content: problem } });
+  await loginViaMagicLink(page, TEST_EMAIL);
+  await page.goto(`/teams/${teamId}/retros/${retroId}`);
+
+  const note = noteInLane(page, "PROBLEM", ids.prob1);
+  const remove = note.getByRole("button", { name: "削除", exact: true });
+  const confirmation = note.getByRole("group", { name: "付箋の削除確認" });
+  await expect(note.getByRole("paragraph").filter({ hasText: problem })).toBeVisible();
+  // 同一シナリオの確認前／確認表示後。旧実装の画像は添付baselineを参照。
+  await page.screenshot({ path: "e2e/__screens__/problem-delete-before.png", fullPage: true });
+
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("削除すると元に戻せません");
+  await expect(confirmation.getByRole("button", { name: "キャンセル" })).toBeFocused();
+  expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).toMatchObject({ content: problem });
+  await page.screenshot({ path: "e2e/__screens__/problem-delete-after.png", fullPage: true });
+
+  await confirmation.getByRole("button", { name: "キャンセル" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await remove.press("Enter");
+  await expect(confirmation).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await page.reload();
+  await expect(note).toBeVisible();
+  await expect(confirmation).toHaveCount(0);
+  expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).toMatchObject({ content: problem });
+
+  await remove.click();
+  await confirmation.getByRole("button", { name: "削除する", exact: true }).click();
+  await expect(note).toHaveCount(0);
+  await expect(async () => {
+    expect(await prisma.note.findUnique({ where: { id: ids.prob1 } })).toBeNull();
+  }).toPass({ timeout: 40_000 });
+  await page.reload();
+  await expect(note).toHaveCount(0);
+  await expect(noteInLane(page, "KEEP", ids.keep1)).toBeVisible();
+  await expect(noteInLane(page, "KEEP", ids.keep2)).toBeVisible();
+});
+
 // キーボードセンサでドラッグ: ハンドルにフォーカス→Space→矢印→Space
 async function keyboardDrag(page: Page, noteId: string, keys: string[]) {
   const handle = grip(page, noteId);
