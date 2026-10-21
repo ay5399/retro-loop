@@ -48,6 +48,8 @@ Get-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 ランナーとポリシーは `%LOCALAPPDATA%/RetroLoopAutomation` にコピーされる。自動編集するworktreeの外に置き、Codexはworkspace-write、Claudeはツールなし・MCPなしで起動する。APIキーを子プロセスに引き継がない。ランナー更新は所有者がインストーラーを再実行する。実行ログは `runs/`、月次費用台帳は `ledger-YYYY-MM.json`。
 
+自動改善のCodex起動だけに `windows.sandbox="elevated"` を指定する。`--ignore-user-config`で個人設定を読まない場合もWindowsのworkspace-writeを有効にするためで、他プロジェクトの設定・権限は変更しない。実効モードがread-onlyだった場合は「変更不要」にせず実行失敗として記録する。
+
 タスクはNodeを直接起動し、PowerShellのExecutionPolicyに依存しない。ビルド・DB・ブラウザテストは使い捨てのGitHub-hosted標準Ubuntuランナーで実行する。このPCでDocker・DB・開発サーバは起動しない。検証workflowには本番Secretsを渡さず、checkoutの資格情報も永続化しない。画面は1回20MiB以下・保存1日で取得する。GitHubのストレージ超過停止を監査してから運用する。
 
 無人実行のGitHub認証には**承認者と異なる専用ボットアカウント**が必要。所有者本人の認証のままでは実装・配信へ進まない。ボット作成や資格情報の発行・切替は自動では行わない。
