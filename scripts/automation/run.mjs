@@ -202,7 +202,10 @@ async function checks(dir, tag) {
   await gh(['run', 'watch', String(run.databaseId), '--repo', policy.repository, '--exit-status'], { timeout: 1_900_000, log: path.join(runDir, `${tag}-checks.log`) });
   const screens = path.join(dir, 'e2e/__screens__');
   await mkdir(screens, { recursive: true });
-  await gh(['run', 'download', String(run.databaseId), '--repo', policy.repository, '--name', 'browser-evidence', '--dir', screens]);
+  const downloaded = path.join(runDir, `${tag}-screens`);
+  await mkdir(downloaded, { recursive: true });
+  await gh(['run', 'download', String(run.databaseId), '--repo', policy.repository, '--name', 'browser-evidence', '--dir', downloaded]);
+  await cp(downloaded, screens, { recursive: true, force: true });
   await save(path.join(runDir, `${tag}-ci.json`), { sha, run: run.databaseId, url: `https://github.com/${policy.repository}/actions/runs/${run.databaseId}` });
 }
 async function review(dir, sha, result) {
