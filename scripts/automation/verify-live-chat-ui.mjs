@@ -56,6 +56,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } });
+    await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
     await page.goto(origin);
     await expect(page.locator('[data-chat-input]')).toBeVisible();
     await page.screenshot({ path: path.join(dir, 'ui-before.png'), fullPage: true });

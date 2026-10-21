@@ -1,5 +1,5 @@
 // Explicit, bounded live inference probe. No production data, database or app code.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
@@ -10,6 +10,8 @@ if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
 const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
 const arg = name => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const sourceRoot = path.resolve(arg('--source') ?? installation.repositoryPath);
+const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceRoot, encoding: 'utf8', windowsHide: true }).trim();
+if (arg('--expected-sha') && (sha !== arg('--expected-sha') || execFileSync('git', ['status', '--porcelain'], { cwd: sourceRoot, encoding: 'utf8', windowsHide: true }).trim())) throw new Error('Candidate must be the clean, independently reviewed SHA');
 const { ACTION_GUIDANCE } = await import(pathToFileURL(path.join(sourceRoot, 'src/lib/llm/chat-guidance.ts')).href);
 const dir = path.resolve(arg('--output-dir') ?? path.join(home, 'live-ai-probe'));
 await mkdir(dir, { recursive: true });
@@ -18,7 +20,7 @@ const cmd = installation.commands.codex;
 const proc = spawn(cmd.file, [...cmd.args, 'app-server', '--listen', 'stdio://'], { cwd: dir, env, windowsHide: true, shell: false });
 const pending = new Map();
 let id = 0, active;
-const report = { at: new Date().toISOString(), route: 'local-codex-app-server', scope: 'Synthetic dialogue only; not the deployed Gemini provider or browser UX', transcripts: [] };
+const report = { at: new Date().toISOString(), sha, route: 'local-codex-app-server', scope: 'Synthetic dialogue only; not the deployed Gemini provider or browser UX', transcripts: [] };
 const send = msg => proc.stdin.write(JSON.stringify(msg) + '\n');
 const rpc = (method, params = {}) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); send({ id: requestId, method, params }); });
 function abort(error) { for (const p of pending.values()) p.reject(error); pending.clear(); if (active) { active.reject(error); active = null; } }
