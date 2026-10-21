@@ -247,10 +247,11 @@ async function develop(kind) {
     const blocked = changedPathsBlocked(files, policy);
     if (blocked.length) throw new Error(`Protected files changed: ${blocked.join(', ')}`);
     const staged = await git(['diff', '--cached'], dir);
+    const runtimeDiff = await git(['diff', '--cached', '--', 'src', 'public', 'e2e'], dir);
     if (/^\+[^+].*["']use server["']/m.test(staged)) throw new Error('New server actions require owner approval');
     if (/(?:AIza[\w-]{25,}|sk-(?:ant-)?[\w-]{20,}|gh[pousr]_[\w]{20,})/.test(staged)) throw new Error('Possible secret in diff');
     if (/^\+.*(?:test\.(?:skip|fixme)|test\.describe\.skip)/m.test(staged) || (await git(['diff', '--cached', '--diff-filter=D', '--name-only'], dir)).split('\n').some(f => f.startsWith('e2e/'))) throw new Error('Weakening browser tests requires owner approval');
-    if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(staged)) throw new Error('New external calls or runtime credential access require owner approval');
+    if (/^\+[^+].*(?:\bfetch\s*\(|process\.env|\brequire\s*\(|\bimport\s*\(|https?:\/\/|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process))/m.test(runtimeDiff)) throw new Error('New external calls or runtime credential access require owner approval');
     const testDiff = await git(['diff', '--cached', '--', 'e2e'], dir);
     if (/^-[^-].*(?:expect\(|assert\.|test\()/m.test(testDiff)) throw new Error('Removing test coverage requires owner approval');
     await git(['commit', '-m', `auto: ${result.title.replaceAll('\n', ' ').slice(0, 100)}`], dir);

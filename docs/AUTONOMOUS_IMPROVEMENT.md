@@ -52,6 +52,8 @@ Get-ScheduledTask -TaskName RetroLoop-AutonomousImprovement
 
 タスクはNodeを直接起動し、PowerShellのExecutionPolicyに依存しない。ビルド・DB・ブラウザテストは使い捨てのGitHub-hosted標準Ubuntuランナーで実行する。このPCでDocker・DB・開発サーバは起動しない。検証workflowには本番Secretsを渡さず、checkoutの資格情報も永続化しない。画面は1回20MiB以下・保存1日で取得する。GitHubのストレージ超過停止を監査してから運用する。
 
+AI画面を変更した場合の例外は、独立レビュー後のクリーンなSHAを対象にした、一時的なPlus実AI画面検証だけとする。架空データ・最大3往復・330秒・loopback接続・ブラウザー外部通信拒否で実行し、保存先は検証ブラウザー内。本番API・認証・PostgreSQLはモックCIで別途確認する。詳細と証拠はdocs/LIVE_AI_VERIFICATION.mdを参照する。調査資料にURLを記載することは外部API呼び出しとは扱わず、実行コードの追加呼び出し・資格情報参照を検査する。
+
 無人実行のGitHub認証には**承認者と異なる専用ボットアカウント**が必要。所有者本人の認証のままでは実装・配信へ進まない。ボット作成や資格情報の発行・切替は自動では行わない。
 
 専用Windowsユーザーは所有者判断で不要とした（`requireDedicatedWindowsUser=false`）。別ユーザーで実行したという監査証跡は作らない。将来trueへ戻す場合は専用ユーザーの実在確認が必要。GitHubボットと承認者の分離は維持し、ボットにはActions変数の書き込み権限を与えない。監査に `botHasNoVariableWrite=true` を含める。production環境がmainブランチのみを許可し、mainにPR必須・CI必須の保護があることもAPIで確認する。
