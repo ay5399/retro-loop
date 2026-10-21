@@ -20,7 +20,9 @@ if (!ci.some(r => r.conclusion === 'success')) throw new Error('Exact-SHA main C
 vercel(['project', 'inspect', 'retro', '--non-interactive']);
 const project = JSON.parse(vercel(['api', '/v9/projects/retro']));
 const alias = process.env.AUTOMATION_PRODUCTION_ALIAS;
-if (!/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(alias ?? '') || !project.targets?.production?.alias?.includes(alias)) throw new Error('Configured production alias unavailable');
+if (!/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(alias ?? '')) throw new Error('Configured production alias unavailable');
+const binding = JSON.parse(vercel(['api', `/v4/aliases/${alias}`]));
+if (binding.projectId !== project.id || binding.deploymentId !== project.targets?.production?.id) throw new Error('Configured production alias is not bound to current production');
 const env = { ALLOW_LIVE_LLM: 'false', ALLOW_LIVE_EMAIL: 'false', GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', AUTH_RESEND_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '', HEALTHCHECK_TOKEN: health.token, AUTOMATION_RELEASE_SHA: sha };
 const args = ['deploy', '.', '--prod', '--skip-domain', '--project', 'retro', '--yes', '--meta', `automationReleaseSha=${sha}`];
 for (const [key, value] of Object.entries(env)) args.push('--env', `${key}=${value}`);
