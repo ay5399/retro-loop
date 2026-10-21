@@ -22,7 +22,7 @@ foreach ($name in @('claude', 'gh', 'git')) {
 $encoding = New-Object System.Text.UTF8Encoding($false)
 $installation = @{ repositoryPath = $repositoryPath; commands = $commands }
 [IO.File]::WriteAllText((Join-Path $statePath 'installation.json'), ($installation | ConvertTo-Json -Depth 8), $encoding)
-foreach ($file in @('run.mjs', 'core.mjs')) {
+foreach ($file in @('run.mjs', 'core.mjs', 'github-app.mjs')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $statePath "runtime/$file") -Force
 }
 foreach ($file in @('policy.json', 'result.schema.json', 'review.schema.json')) {
@@ -60,4 +60,4 @@ if (!$SkipTaskRegistration) {
   Register-ScheduledTask -TaskName 'RetroLoop-AutonomousImprovement' -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'JST 05:00/13:00/21:00. Billing audit required; paid calls disabled by default.' -Force | Select-Object TaskName, State
 }
 Write-Output "Installed: $statePath"
-Write-Output 'Billing audit remains unverified. No AI task or deployment runs until verification passes.'
+Write-Output 'Existing audit is preserved. Development and production release prerequisites are checked separately; run launch.ps1 --dry-run for current status (exit 2 = blocked).'

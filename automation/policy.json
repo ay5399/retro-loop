@@ -8,7 +8,18 @@
   "monthlyLimitYen": 1000,
   "operatingLimitYen": 800,
   "allowPaidUsage": false,
+  "requireDedicatedWindowsUser": false,
+  "githubAuth": "app",
   "auditMaxAgeDays": 7,
   "services": ["codex", "claude", "github", "vercel", "neon", "gemini", "resend", "devlake"],
-  "protectedPaths": ["automation/", "scripts/automation/", ".github/", "prisma/", ".env", "AGENTS.md", "claude.md", "package", "next.config", ".gitignore", ".vercelignore", "src/auth.ts", "src/lib/service-policy.ts", "src/lib/anthropic.ts", "src/lib/llm/", "src/app/api/chat/route.ts"]
+  "protectedPaths": ["automation/", "scripts/automation/", ".github/", "prisma/", ".env", "AGENTS.md", "claude.md", "package", "next.config", ".gitignore", ".vercelignore", "src/auth.ts", "src/lib/service-policy.ts", "src/lib/anthropic.ts", "src/lib/llm/", "src/app/api/chat/route.ts"],
+  "productDirection": {
+    "purpose": "AI協働力を示す転職ポートフォリオ。人間は設計・検証・費用・リスクを判断し、実装詳細はAIに任せる。",
+    "priorityScenario": "参加メンバーが自分のProblemからAIの問い返しで、誰が・いつ・何をするか明確な自分のアクションを確認・保存する。AIは本人の答えを引き出し、項目を捏造しない。",
+    "evidence": "代表的な利用シナリオの変更前後を成果にする。技術指標は品質を守るために使う。",
+    "validation": "通常CIはモックAI。AIの問い返し・具体化・確認に関わる変更は少数の代表シナリオで実AI体験も検証し、モック成功だけで品質合格にしない。実AIは通常CIと分離し、確認済みPlus枠・ダミーデータ・限定実行を用いる。追加購入や従量APIへ切り替えない。モデル差・応答・遅延・未完了範囲を記録する。接続確認とアプリUIから保存までの検証を区別する。docs/PRODUCT_DIRECTION.mdとdocs/LIVE_AI_VERIFICATION.mdを参照。実AIのUI接続とランナーへの自動統合は未実装。",
+    "humanReview": "通常変更は独立したClaudeレビューとCI後に自動反映し、作者は週次レビューする。破壊的変更は事前承認が必要。",
+    "report": "summaryに観測した課題、変更前後、残る制約、週次で判断すべき点を記録する。Claudeの指摘と対応はレビュー記録に残す。",
+    "scope": "初回は本人担当・日付・確認修正・保存再表示・未着手/完了。効果追跡は対象外。細かなUIは実装時に判断する。DB等の保護対象は通常実行で変更しない。"
+  }
 }

@@ -32,6 +32,7 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TELEMETRY_DISABLED: '1'
+      HEALTHCHECK_TOKEN: ${{ secrets.AUTOMATION_HEALTHCHECK_TOKEN }}
     steps:
       - name: Validate release and wait for exact-SHA CI
         uses: actions/github-script@v7
@@ -44,6 +45,7 @@ jobs:
             if (open.some(i => i.title.startsWith('[Release lease] '))) throw new Error('An earlier release still needs verification or recovery');
             const expiry = Date.parse(process.env.AUDIT_UNTIL);
             if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new Error('Billing audit is unverified or expired');
+            if (!process.env.HEALTHCHECK_TOKEN) throw new Error('Runtime health-check secret is missing');
             const sha = process.env.TARGET_SHA;
             if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid SHA');
             if (context.ref !== 'refs/heads/main') throw new Error('Dispatch must use main');
@@ -94,19 +96,17 @@ jobs:
         uses: actions/github-script@v7
         env:
           PREVIOUS: ${{ steps.previous.outputs.previous }}
+          PREVIOUS_SHA: ${{ steps.previous.outputs.previous_sha }}
         with:
           script: |
-            const { data } = await github.rest.issues.create({ ...context.repo, title: `[Release lease] ${context.runId}`, body: JSON.stringify({ runId: context.runId, sha: process.env.TARGET_SHA, previous: process.env.PREVIOUS }) });
+            const { data } = await github.rest.issues.create({ ...context.repo, title: `[Release lease] ${context.runId}`, body: JSON.stringify({ runId: context.runId, sha: process.env.TARGET_SHA, previous: process.env.PREVIOUS, previousSha: process.env.PREVIOUS_SHA }) });
             core.setOutput('issue', data.number);
       - name: Deploy production artifact
         id: deploy
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          HEALTHCHECK_TOKEN=$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))')
-          echo "::add-mask::$HEALTHCHECK_TOKEN"
-          echo "HEALTHCHECK_TOKEN=$HEALTHCHECK_TOKEN" >> "$GITHUB_ENV"
-          npx vercel@64.2.0 deploy --prebuilt --prod --env ALLOW_LIVE_LLM=false --env ALLOW_LIVE_EMAIL=false --env GEMINI_API_KEY= --env ANTHROPIC_API_KEY= --env AUTH_RESEND_KEY= --env GOOGLE_GENERATIVE_AI_API_KEY= --env HEALTHCHECK_TOKEN="$HEALTHCHECK_TOKEN" --env AUTOMATION_RELEASE_SHA="$TARGET_SHA" --token="$VERCEL_TOKEN" > .deployment-url
+          npx vercel@64.2.0 deploy --prebuilt --prod --meta automationReleaseSha="$TARGET_SHA" --env ALLOW_LIVE_LLM=false --env ALLOW_LIVE_EMAIL=false --env GEMINI_API_KEY= --env ANTHROPIC_API_KEY= --env AUTH_RESEND_KEY= --env GOOGLE_GENERATIVE_AI_API_KEY= --env HEALTHCHECK_TOKEN="$HEALTHCHECK_TOKEN" --env AUTOMATION_RELEASE_SHA="$TARGET_SHA" --token="$VERCEL_TOKEN" > .deployment-url
       - name: Verify production
         id: verify
         env:
@@ -130,6 +130,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           PREVIOUS: ${{ steps.previous.outputs.previous }}
+          PREVIOUS_SHA: ${{ steps.previous.outputs.previous_sha }}
         run: node scripts/automation/deployment.mjs verify-rollback
       - name: Record release incident
         if: ${{ always() && steps.deploy.outcome != 'skipped' && steps.deploy.outcome != '' && (steps.deploy.outcome != 'success' || steps.verify.outcome != 'success') }}
