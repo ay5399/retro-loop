@@ -201,8 +201,14 @@ async function checks(dir, tag) {
   if (!run) throw new Error('Verification workflow did not start');
   await gh(['run', 'watch', String(run.databaseId), '--repo', policy.repository, '--exit-status'], { timeout: 1_900_000, log: path.join(runDir, `${tag}-checks.log`) });
   const screens = path.join(dir, 'e2e/__screens__');
-  await mkdir(screens, { recursive: true });
-  await gh(['run', 'download', String(run.databaseId), '--repo', policy.repository, '--name', 'browser-evidence', '--dir', screens]);
+  const { mkdtemp, rm, realpath } = await import('node:fs/promises');
+  const downloaded = await mkdtemp(path.join(runDir, `${tag}-screens-`));
+  await gh(['run', 'download', String(run.databaseId), '--repo', policy.repository, '--name', 'browser-evidence', '--dir', downloaded]);
+  const actualParent = await realpath(path.dirname(screens));
+  const actualWorktree = await realpath(dir);
+  if (!actualParent.startsWith(actualWorktree + path.sep) || path.basename(screens) !== '__screens__') throw new Error('Screenshots directory is outside the worktree');
+  await rm(screens, { recursive: true, force: true });
+  await cp(downloaded, screens, { recursive: true, force: true });
   await save(path.join(runDir, `${tag}-ci.json`), { sha, run: run.databaseId, url: `https://github.com/${policy.repository}/actions/runs/${run.databaseId}` });
 }
 async function review(dir, sha, result) {
