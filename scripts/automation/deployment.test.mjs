@@ -20,8 +20,8 @@ test('release requires safe rollback runtime at its public alias and exact SHA',
     };
     process.argv[2] = 'previous';
     await import(`./deployment.mjs?case=valid-${Date.now()}`);
-    assert.ok(calls.includes('https://retro.vercel.app/api/health'));
-    assert.ok(!calls.includes(`${previous}/api/health`));
+    assert.ok(calls.some(url => url === 'https://retro.vercel.app/api/health'));
+    assert.ok(calls.every(url => url !== `${previous}/api/health`));
     assert.match(await readFile(path.join(dir, 'output'), 'utf8'), new RegExp(`previous_sha=${sha}`));
     health = { ...health, keysPresent: true };
     await assert.rejects(import(`./deployment.mjs?case=key-${Date.now()}`), /Runtime SHA or external-call gates/);
