@@ -58,7 +58,7 @@ test('rollback uses project-only APIs and rejects a different project or SHA bef
     assert.deepEqual(posts, []);
     process.env.PREVIOUS_SHA = sha;
     await import(`./deployment.mjs?case=rollback-valid-${Date.now()}`);
-    assert.deepEqual(posts, [{ pathname: '/v9/projects/test-project/rollback/dpl_safe', body: '{}' }]);
+    assert.deepEqual(posts, [{ pathname: '/v10/projects/test-project/promote/dpl_safe', body: '{}' }]);
     await import(`./deployment.mjs?case=rollback-again-${Date.now()}`);
     assert.equal(posts.length, 1);
   } finally {

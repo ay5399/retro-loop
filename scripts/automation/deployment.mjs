@@ -17,7 +17,7 @@ async function rollbackPrevious() {
   if (deployment.projectId !== project || deployment.meta?.automationReleaseSha !== sha || !/^dpl_[a-zA-Z0-9]+$/.test(deployment.id ?? '')) throw new Error('Rollback target does not match the project and verified SHA');
   const before = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
   if (before.targets?.production?.id === deployment.id) { console.log('Previous production target is already restored'); return; }
-  await vercel(`/v9/projects/${encodeURIComponent(project)}/rollback/${encodeURIComponent(deployment.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
+  await vercel(`/v10/projects/${encodeURIComponent(project)}/promote/${encodeURIComponent(deployment.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
     const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
@@ -41,9 +41,12 @@ async function verifySafeRuntime(url, expectedSha) {
 async function productionUrl(project) {
   const alias = process.env.AUTOMATION_PRODUCTION_ALIAS;
   if (!/^[a-zA-Z0-9.-]+\.vercel\.app$/.test(alias ?? '')) throw new Error('Configured production alias unavailable');
-  const binding = await vercel(`/v4/aliases/${encodeURIComponent(alias)}?projectId=${encodeURIComponent(project.id)}&teamId=${encodeURIComponent(team)}`);
-  if (binding.alias !== alias || binding.projectId !== project.id || binding.deploymentId !== project.targets?.production?.id) throw new Error('Configured production alias unavailable or points to a different deployment');
-  return `https://${alias}`;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const binding = await vercel(`/v4/aliases/${encodeURIComponent(alias)}?projectId=${encodeURIComponent(project.id)}&teamId=${encodeURIComponent(team)}`);
+    if (binding.alias === alias && binding.projectId === project.id && binding.deploymentId === project.targets?.production?.id) return `https://${alias}`;
+    if (attempt < 14) await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error('Configured production alias unavailable or points to a different deployment');
 }
 if (action === 'previous') {
   const data = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
