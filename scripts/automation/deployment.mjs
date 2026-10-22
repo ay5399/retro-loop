@@ -63,7 +63,9 @@ if (action === 'previous') {
   if (!/^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app$/.test(deployed) || !/^[a-f0-9]{40}$/.test(process.env.TARGET_SHA ?? '')) throw new Error('Invalid promotion target or SHA');
   const data = await vercel(`/v13/deployments/${encodeURIComponent(new URL(deployed).hostname)}?teamId=${encodeURIComponent(team)}`);
   if (data.projectId !== project || data.meta?.automationReleaseSha !== process.env.TARGET_SHA || data.readyState !== 'READY' || data.target !== 'production' || !/^dpl_[a-zA-Z0-9]+$/.test(data.id ?? '')) throw new Error('Promotion target does not match the ready production release');
-  await vercel(`/v10/projects/${encodeURIComponent(project)}/promote/${encodeURIComponent(data.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
+  const before = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
+  if (before.targets?.production?.id === data.id) console.log('Release is already the production target');
+  else await vercel(`/v10/projects/${encodeURIComponent(project)}/promote/${encodeURIComponent(data.id)}?teamId=${encodeURIComponent(team)}`, { method: 'POST', body: {} });
   const until = Date.now() + 60_000;
   while (true) {
     const current = await vercel(`/v9/projects/${encodeURIComponent(project)}?teamId=${encodeURIComponent(team)}`);
