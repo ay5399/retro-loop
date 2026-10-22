@@ -28,6 +28,8 @@ test('promotion validates the project and SHA and switches a rollback-pinned tar
     process.env.TARGET_SHA = sha;
     await import(`./deployment.mjs?case=promote-valid-${Date.now()}`);
     assert.deepEqual(posts, ['/v10/projects/test-project/promote/dpl_new']);
+    await import(`./deployment.mjs?case=promote-again-${Date.now()}`);
+    assert.equal(posts.length, 1);
   } finally {
     process.chdir(cwd); globalThis.fetch = originalFetch; process.argv = originalArgv;
     for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
