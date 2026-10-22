@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useOptimistic, useState, useTransition } from "react";
+import { useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -686,6 +686,18 @@ function SortableNote({
   } = useSortable({ id: note.id });
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteButtonRef = useRef<HTMLButtonElement>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (confirmingDelete) cancelDeleteRef.current?.focus();
+  }, [confirmingDelete]);
+
+  function cancelDelete() {
+    setConfirmingDelete(false);
+    deleteButtonRef.current?.focus();
+  }
 
   // 未投票 かつ 上限到達 のときだけ投票不可（投票済みは常に取り消せる）。
   const voteDisabled = atVoteLimit && !note.hasVoted;
@@ -789,12 +801,49 @@ function SortableNote({
             >
               色
             </button>
-            <form action={deleteNote.bind(null, teamId, retroId, note.id)}>
-              <button type="submit" className="hover:text-problem">
-                削除
-              </button>
-            </form>
+            <button
+              ref={deleteButtonRef}
+              type="button"
+              aria-expanded={confirmingDelete}
+              onClick={() => setConfirmingDelete(true)}
+              className="hover:text-problem"
+            >
+              削除
+            </button>
           </div>
+
+          {confirmingDelete && (
+            <div
+              role="group"
+              aria-label="付箋の削除確認"
+              className="mt-2 rounded-lg border border-line bg-surface p-2 text-xs"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  cancelDelete();
+                }
+              }}
+            >
+              <p role="status">この付箋を削除しますか？ 削除すると元に戻せません。</p>
+              <form
+                action={deleteNote.bind(null, teamId, retroId, note.id)}
+                className="mt-2 flex flex-wrap gap-2"
+              >
+                <button
+                  ref={cancelDeleteRef}
+                  type="button"
+                  onClick={cancelDelete}
+                  className="btn btn-ghost btn-sm"
+                >
+                  キャンセル
+                </button>
+                <button type="submit" className="btn btn-ghost btn-sm text-problem">
+                  削除する
+                </button>
+              </form>
+            </div>
+          )}
 
           {pickerOpen && (
             // 不透明な surface 背景＋薄いボーダー・角丸・小さな影で、
