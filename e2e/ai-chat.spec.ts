@@ -9,6 +9,7 @@ const prisma = new PrismaClient();
 
 const MEMBER_EMAIL = "e2e-chat@example.com";
 const OUTSIDER_EMAIL = "e2e-chat-outsider@example.com";
+const OTHER_MEMBER_EMAIL = "e2e-chat-other-member@example.com";
 const TEAM_NAME = "E2Eチャットチーム";
 
 let teamId = "";
@@ -17,15 +18,17 @@ let retroId = "";
 test.beforeAll(async () => {
   // 前回残骸の掃除
   await prisma.team.deleteMany({ where: { name: TEAM_NAME } });
-  await prisma.user.deleteMany({ where: { email: { in: [MEMBER_EMAIL, OUTSIDER_EMAIL] } } });
+  await prisma.user.deleteMany({ where: { email: { in: [MEMBER_EMAIL, OUTSIDER_EMAIL, OTHER_MEMBER_EMAIL] } } });
 
   const member = await prisma.user.create({ data: { email: MEMBER_EMAIL, name: "E2E Chat" } });
   // 非メンバーを明示シード（403 検証で使用。ログインで自動作成されるが掃除対象を確定させる）
   await prisma.user.create({ data: { email: OUTSIDER_EMAIL, name: "E2E Outsider" } });
+  const other = await prisma.user.create({ data: { email: OTHER_MEMBER_EMAIL, name: "E2E Other Member" } });
 
   const team = await prisma.team.create({ data: { name: TEAM_NAME } });
   teamId = team.id;
   await prisma.membership.create({ data: { userId: member.id, teamId } });
+  await prisma.membership.create({ data: { userId: other.id, teamId } });
 
   const retro = await prisma.retrospective.create({ data: { teamId, name: "チャット検証回" } });
   retroId = retro.id;
@@ -35,6 +38,7 @@ test.beforeAll(async () => {
     data: [
       { retrospectiveId: retroId, authorId: member.id, kind: "KEEP", content: "毎朝の同期がうまくいった", order: 0 },
       { retrospectiveId: retroId, authorId: member.id, kind: "PROBLEM", content: "レビュー待ちが長かった", order: 0 },
+      { retrospectiveId: retroId, authorId: other.id, kind: "PROBLEM", content: "別メンバーの架空Problem", order: 1 },
       { retrospectiveId: retroId, authorId: member.id, kind: "TRY", content: "レビュー担当を輪番にする", order: 0 },
     ],
   });
@@ -42,13 +46,72 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await prisma.team.deleteMany({ where: { name: TEAM_NAME } });
-  await prisma.user.deleteMany({ where: { email: { in: [MEMBER_EMAIL, OUTSIDER_EMAIL] } } });
+  await prisma.user.deleteMany({ where: { email: { in: [MEMBER_EMAIL, OUTSIDER_EMAIL, OTHER_MEMBER_EMAIL] } } });
   await prisma.$disconnect();
 });
 
 function retroUrl() {
   return `/teams/${teamId}/retros/${retroId}`;
 }
+
+// 提案版の操作前を撮影する。旧版の画面証拠は提供済みのai-chat.png。
+test("Problem相談の操作前画面を撮影する", async ({ page }) => {
+  await loginViaMagicLink(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  await expect(page.locator("[data-chat-input]")).toBeVisible();
+  await expect(page.locator("[data-chat-input]")).toHaveValue("");
+  await expect(page.getByLabel("自分のProblemから相談する")).toHaveValue("");
+  await page.screenshot({ path: "e2e/__screens__/problem-consultation-before.png", fullPage: true });
+});
+
+test("本人のProblemを編集可能な下書きに追加し、明示送信する", async ({ page }) => {
+  await loginViaMagicLink(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  let requests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/chat" && request.method() === "POST") requests++;
+  });
+  const choice = page.getByLabel("自分のProblemから相談する");
+  await expect(choice.locator("option")).toHaveText(["Problemを選択", "レビュー待ちが長かった"]);
+  const input = page.locator("[data-chat-input]");
+  await input.fill("入力済みの相談");
+  await choice.selectOption({ label: "レビュー待ちが長かった" });
+  await page.getByRole("button", { name: "相談文の下書きに追加" }).click();
+  await expect(input).toHaveValue(/^入力済みの相談\n\n自分のProblem：\nレビュー待ちが長かった/);
+  await input.fill(`${await input.inputValue()}\nまだ行動と日付は未定です。`);
+  const editedDraft = await input.inputValue();
+  await expect(input).toHaveValue(editedDraft);
+  await expect(page.locator("[data-ai-chat] li")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "相談文の下書きに追加" })).toBeDisabled();
+  expect(requests).toBe(0);
+  await page.screenshot({ path: "e2e/__screens__/problem-consultation-after.png", fullPage: true });
+  const sentRequest = page.waitForRequest((request) =>
+    new URL(request.url()).pathname === "/api/chat" && request.method() === "POST");
+  await page.locator("[data-chat-send]").click();
+  const payload = (await sentRequest).postDataJSON();
+  expect(payload.retroId).toBe(retroId);
+  expect(payload.teamId).toBe(teamId);
+  expect(payload.messages.at(-1).parts).toContainEqual({ type: "text", text: editedDraft });
+  await expect(page.locator("[data-ai-chat] li.justify-end")).toHaveText(editedDraft);
+  await expect.poll(() => assistantReplyReady(page), { timeout: 45_000 }).toBe(true);
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue("");
+  expect(requests).toBe(1);
+});
+
+test("本人のProblemがない場合も通常相談できる", async ({ page }) => {
+  const retro = await prisma.retrospective.create({ data: { teamId, name: "Problemなしの架空回" } });
+  try {
+    await loginViaMagicLink(page, MEMBER_EMAIL);
+    await page.goto(`/teams/${teamId}/retros/${retro.id}`);
+    await expect(page.getByText("自分のProblemはまだありません。通常の相談も利用できます。")).toBeVisible();
+    await page.locator("[data-chat-input]").fill("今回の進め方を相談したいです");
+    await page.locator("[data-chat-send]").click();
+    await expect.poll(() => assistantReplyReady(page), { timeout: 45_000 }).toBe(true);
+  } finally {
+    await prisma.retrospective.delete({ where: { id: retro.id } });
+  }
+});
 
 // アシスタントバブル（左寄せ = role !== user）の最新テキスト。空/プレースホルダ"…"は未達扱い。
 async function assistantReplyReady(page: Page): Promise<boolean> {

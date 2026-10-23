@@ -20,8 +20,13 @@ const TOOL_LABELS: Record<string, string> = {
   flagRecurringIssues: "前回までの積み残しを確認中…",
 };
 
-export function AiChat({ teamId, retroId }: { teamId: string; retroId: string }) {
+export function AiChat({ teamId, retroId, ownProblems = [] }: {
+  teamId: string;
+  retroId: string;
+  ownProblems?: { id: string; content: string }[];
+}) {
   const [input, setInput] = useState("");
+  const [problemId, setProblemId] = useState("");
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
@@ -40,6 +45,27 @@ export function AiChat({ teamId, retroId }: { teamId: string; retroId: string })
 
   return (
     <div className="card space-y-4" data-ai-chat>
+      <div className="space-y-2">
+        {ownProblems.length > 0 ? (
+          <>
+            <label className="block text-sm" htmlFor="consultation-problem">自分のProblemから相談する</label>
+            <select id="consultation-problem" className="field w-full" value={problemId}
+              onChange={(e) => setProblemId(e.target.value)} disabled={busy}>
+              <option value="">Problemを選択</option>
+              {ownProblems.map((problem) => <option key={problem.id} value={problem.id}>{problem.content}</option>)}
+            </select>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !problemId}
+              onClick={() => {
+                const problem = ownProblems.find((p) => p.id === problemId);
+                if (!problem) return;
+                const draft = `自分のProblem：\n${problem.content}\n\n自分が実行するアクションを一つ考えたいです。行動・担当・日付の未確定項目は補完せず、私に質問してください。保存前に内容を確認したいです。`;
+                setInput((current) => current ? `${current}\n\n${draft}` : draft);
+                setProblemId("");
+              }}>相談文の下書きに追加</button>
+          </>
+        ) : <p className="text-sm text-muted">自分のProblemはまだありません。通常の相談も利用できます。</p>}
+        <p className="text-xs text-muted">下書きは編集できます。「送信」を押すまでAIには送信されません。アクションは自動保存されません。</p>
+      </div>
       <div className="flex flex-col gap-3">
         {messages.length === 0 ? (
           <div className="space-y-3">
@@ -115,8 +141,10 @@ export function AiChat({ teamId, retroId }: { teamId: string; retroId: string })
           submit(input);
         }}
       >
-        <input
+        <textarea
           className="field flex-1"
+          rows={4}
+          aria-label="AIへの相談文"
           placeholder="AIアシスタントに相談…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
