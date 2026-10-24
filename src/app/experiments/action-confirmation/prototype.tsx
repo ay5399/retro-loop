@@ -19,15 +19,21 @@ export default function Prototype() {
   const [user, setUser] = useState("架空メンバーA");
   const [retro, setRetro] = useState("架空ふりかえり1");
   const [comparison, setComparison] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    // Keep experiment switches inert until React has attached their handlers.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHydrated(true);
+  }, []);
   return <main className="mx-auto w-full max-w-4xl space-y-6 p-6">
     <p className="eyebrow">RetroLoop / 隔離プロトタイプ</p>
     <h1 className="text-2xl font-bold">自分のProblemから、一つのアクションへ</h1>
     <p>実験用・固定モック応答のみ。架空データ専用です。保存先はこのブラウザー内で、本番には保存しません。</p>
-    <div className="flex flex-wrap gap-4">
+    <fieldset disabled={!hydrated} className="flex flex-wrap gap-4" aria-label="実験条件">
       <label>実験ユーザー<select className="field" value={user} onChange={e => setUser(e.target.value)}><option>架空メンバーA</option><option>架空メンバーB</option></select></label>
       <label>実験ふりかえり<select className="field" value={retro} onChange={e => setRetro(e.target.value)}><option>架空ふりかえり1</option><option>架空ふりかえり2</option></select></label>
       <label className="self-end"><input type="checkbox" checked={comparison} onChange={e => setComparison(e.target.checked)} /> 自由文のみの比較画面</label>
-    </div>
+    </fieldset>
     <Session key={`${user}:${retro}:${comparison}`} user={user} retro={retro} comparison={comparison} />
   </main>;
 }

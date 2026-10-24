@@ -42,11 +42,14 @@ async function prepare(page: Page) {
 
 test("本人入力の確認・保存・再表示と自由文比較", async ({ page }) => {
   await page.goto(path);
+  await expect(page.getByRole("group", { name: "実験条件" })).toBeEnabled();
   await page.getByLabel("自由文のみの比較画面").check();
+  await expect(page.getByRole("region", { name: "本人の確認カード" })).toHaveCount(0);
   await converse(page);
   await expect(page.getByRole("button", { name: "確認してブラウザーに保存" })).toHaveCount(0);
   await page.screenshot({ path: "e2e/__screens__/action-confirmation-before.png", fullPage: true });
   await page.getByLabel("自由文のみの比較画面").uncheck();
+  await expect(page.getByRole("region", { name: "本人の確認カード" })).toBeVisible();
   const save = page.getByRole("button", { name: "確認してブラウザーに保存" });
   await converse(page);
   await expect(page.getByLabel("実行する行動", { exact: true })).toHaveValue("");
@@ -91,7 +94,7 @@ test("保存失敗では成功表示せず、再試行できる", async ({ page 
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
-      if (key.startsWith("retroloop:experiment:action-v1:")) {
+      if (this === localStorage && key.startsWith("retroloop:experiment:action-v1:")) {
         Storage.prototype.setItem = original;
         throw new DOMException("Dummy quota exceeded", "QuotaExceededError");
       }
@@ -112,7 +115,7 @@ test("完了の保存失敗では未着手を維持する", async ({ page }) => 
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
-      if (key.startsWith("retroloop:experiment:action-v1:")) {
+      if (this === localStorage && key.startsWith("retroloop:experiment:action-v1:")) {
         Storage.prototype.setItem = original;
         throw new DOMException("Dummy quota exceeded", "QuotaExceededError");
       }
@@ -149,10 +152,33 @@ for (const [name, raw] of [
 
 test("ブラウザー保存の読込拒否時は書き込まない", async ({ page }) => {
   await page.addInitScript(() => {
-    Storage.prototype.getItem = () => { throw new DOMException("Dummy access denied", "SecurityError"); };
-    Storage.prototype.setItem = () => { throw new Error("Unexpected write"); };
+    const originalGet = Storage.prototype.getItem;
+    const originalSet = Storage.prototype.setItem;
+    let writes = 0;
+    Object.defineProperty(window, "experimentWriteAttempts", { get: () => writes });
+    Storage.prototype.getItem = function (key) {
+      if (this === localStorage && key.startsWith("retroloop:experiment:action-v1:")) {
+        throw new DOMException("Dummy access denied", "SecurityError");
+      }
+      return originalGet.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (this === localStorage && key.startsWith("retroloop:experiment:action-v1:")) {
+        writes++;
+        throw new Error("Unexpected experiment write");
+      }
+      return originalSet.call(this, key, value);
+    };
   });
   await page.goto(path);
   await expect(page.getByRole("alert")).toContainText("上書きせず、この実験を停止しました");
   await expect(page.getByRole("button", { name: "確認してブラウザーに保存" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "返答する" })).toBeDisabled();
+  // The failure injection must leave framework/session storage usable.
+  await page.evaluate(() => {
+    sessionStorage.setItem("experiment-control", "ok");
+    localStorage.setItem("experiment-control", "ok");
+  });
+  expect(await page.evaluate(() => [sessionStorage.getItem("experiment-control"), localStorage.getItem("experiment-control")])).toEqual(["ok", "ok"]);
+  expect(await page.evaluate(() => Reflect.get(window, "experimentWriteAttempts"))).toBe(0);
 });
