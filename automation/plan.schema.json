@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "summary",
+    "risk",
+    "sources",
+    "screenshots",
+    "assumption",
+    "successCriteria",
+    "decision"
+  ],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "reversible",
+        "approval-required"
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assumption": {
+      "type": "string"
+    },
+    "successCriteria": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "implement",
+        "no-change"
+      ],
+      "description": "Choose implement when a safe useful improvement is planned, even though planning is read-only. no-change means no suitable improvement exists, not that files are currently unchanged."
+    }
+  }
+}

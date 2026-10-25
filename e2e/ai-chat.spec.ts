@@ -150,6 +150,15 @@ test("送信するとモックの返答がストリーム表示される（外�
   const input = page.locator("[data-chat-input]");
   const send = page.locator("[data-chat-send]");
 
+  // Hold the real mock-backed request until the pending UI has been checked.
+  // Otherwise a fast response can finish between Playwright assertions.
+  let releaseRequest!: () => void;
+  const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
+  await page.route("**/api/chat", async (route) => {
+    await requestGate;
+    await route.continue();
+  });
+
   // 実Geminiのレート/失敗に備えて最大2回試行
   let replied = false;
   for (let attempt = 1; attempt <= 2 && !replied; attempt++) {
@@ -159,8 +168,13 @@ test("送信するとモックの返答がストリーム表示される（外�
 
     // 送信直後は busy（送信ボタンが無効・応答中表示）— 初回は確実に無効化される
     if (attempt === 1) {
-      await expect(send).toBeDisabled();
-      await expect(send).toHaveText("応答中…");
+      try {
+        await expect(send).toBeDisabled();
+        await expect(send).toHaveText("応答中…");
+        await expect(input).toBeDisabled();
+      } finally {
+        releaseRequest();
+      }
     }
 
     try {

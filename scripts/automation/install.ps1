@@ -25,7 +25,7 @@ $installation = @{ repositoryPath = $repositoryPath; commands = $commands }
 foreach ($file in @('run.mjs', 'core.mjs', 'github-app.mjs')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $statePath "runtime/$file") -Force
 }
-foreach ($file in @('policy.json', 'result.schema.json', 'review.schema.json')) {
+foreach ($file in @('policy.json', 'plan.schema.json', 'result.schema.json', 'review.schema.json')) {
   Copy-Item -LiteralPath (Join-Path $repositoryPath "automation/$file") -Destination (Join-Path $statePath $file) -Force
 }
 $launcher = @'
