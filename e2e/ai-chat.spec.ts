@@ -121,6 +121,78 @@ async function assistantReplyReady(page: Page): Promise<boolean> {
   return t.length > 0 && t !== "…";
 }
 
+// 変更前のcheckoutにもこのテストを適用し、同じ503の証拠を採取する。
+// 通常CIは変更後の全条件を検証する。どちらも既存のモックAIだけを利用する。
+test("Problem相談の通信失敗から同じ相談で復帰する", async ({ page }) => {
+  test.setTimeout(150_000);
+  await loginViaMagicLink(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  const chat = page.locator("[data-ai-chat]");
+  const input = page.locator("[data-chat-input]");
+  const send = page.locator("[data-chat-send]");
+  let requests = 0;
+  const payloads: { messages: { id: string; role: string; parts: unknown[] }[] }[] = [];
+  let releaseRetry!: () => void;
+  const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+  await page.route("**/api/chat", async (route) => {
+    requests++;
+    payloads.push(route.request().postDataJSON());
+    if (requests === 1) {
+      await route.fulfill({ status: 503, contentType: "text/plain", body: "dummy-internal-error-do-not-display" });
+      return;
+    }
+    await retryGate;
+    await route.continue();
+  });
+  await page.getByLabel("自分のProblemから相談する").selectOption({ label: "レビュー待ちが長かった" });
+  await page.getByRole("button", { name: "相談文の下書きに追加" }).click();
+  const consultation = await input.inputValue();
+  await send.click();
+  await expect.poll(() => requests).toBe(1);
+  await expect(send).toHaveText("送信");
+  await expect(input).toBeEnabled();
+  await expect(chat.locator("li.justify-end")).toHaveText(consultation);
+
+  const alert = chat.getByRole("alert");
+  try {
+    await expect(alert).toContainText("AIの応答を受け取れませんでした。");
+  } catch (failure) {
+    // 旧版では通知欠落を撮影して失敗を維持する。新版の回帰も合格扱いにしない。
+    await page.screenshot({ path: "e2e/__screens__/chat-error-recovery-before.png", fullPage: true });
+    throw failure;
+  }
+  await expect(chat).not.toContainText("dummy-internal-error-do-not-display");
+  const newDraft = "追記用の下書き：日付はまだ未定です。";
+  await input.fill(newDraft);
+  // 失敗後も、待機中に自動再送しない（有限の観測窓）。
+  await page.waitForTimeout(800);
+  expect(requests).toBe(1);
+  await page.screenshot({ path: "e2e/__screens__/chat-error-recovery-after.png", fullPage: true });
+  const retry = chat.getByRole("button", { name: "同じ相談で再試行" });
+  try {
+    await retry.click();
+    await expect.poll(() => requests).toBe(2);
+    await expect(retry).toBeDisabled();
+    await expect(send).toBeDisabled();
+    // disabled中の追加クリックでも再リクエストを発生させない。
+    await retry.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+    expect(requests).toBe(2);
+    await expect(input).toHaveValue(newDraft);
+    expect(payloads[1].messages).toEqual(payloads[0].messages);
+    expect(payloads[1].messages.filter((message) => message.role === "user")).toHaveLength(1);
+  } finally {
+    releaseRetry();
+  }
+  await expect.poll(() => assistantReplyReady(page), { timeout: 45_000 }).toBe(true);
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue(newDraft);
+  await expect(chat.locator("li.justify-end")).toHaveText(consultation);
+  await expect(alert).toHaveCount(0);
+  await expect(retry).toHaveCount(0);
+  expect(requests).toBe(2);
+  await page.screenshot({ path: "e2e/__screens__/chat-error-recovery-resumed.png", fullPage: true });
+});
+
 test("チャットUIが表示され、サジェストが出る（AIはチャットに一本化）", async ({ page }) => {
   await loginViaMagicLink(page, MEMBER_EMAIL);
   await page.goto(retroUrl());

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 
@@ -27,14 +27,28 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
 }) {
   const [input, setInput] = useState("");
   const [problemId, setProblemId] = useState("");
-  const { messages, sendMessage, status } = useChat({
+  const [retrying, setRetrying] = useState(false);
+  const retryLock = useRef(false);
+  const { messages, sendMessage, status, error, regenerate } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       body: { retroId, teamId },
     }),
   });
 
-  const busy = status === "submitted" || status === "streaming";
+  const busy = retrying || status === "submitted" || status === "streaming";
+
+  async function retry() {
+    if (!error || busy || retryLock.current) return;
+    retryLock.current = true;
+    setRetrying(true);
+    try {
+      await regenerate();
+    } finally {
+      retryLock.current = false;
+      setRetrying(false);
+    }
+  }
 
   function submit(text: string) {
     const trimmed = text.trim();
@@ -133,6 +147,15 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
           </ul>
         )}
       </div>
+
+      {(error || retrying) && (
+        <div className="space-y-2">
+          {error && <p role="alert" className="text-sm">AIの応答を受け取れませんでした。相談内容は会話に残っています。時間をおいて再試行してください。</p>}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={retry} disabled={busy}>
+            同じ相談で再試行
+          </button>
+        </div>
+      )}
 
       <form
         className="flex items-end gap-2"
