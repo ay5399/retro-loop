@@ -29,6 +29,25 @@ test('test disabling and deleted coverage remain blocked', () => {
   assert.ok(validateCandidateDiff('+++ b/e2e/chat.spec.ts\n@@ -1 +1 @@\n-expect(value).toBe(true)\n+expect(value).toBe(false)').length);
 });
 
+test('loopback comparison exemption never allows requests, navigation, or compound statements', () => {
+  const blocked = [
+    'expect((await page.request.get("http://127.0.0.1:5432/")).ok()).toBeTruthy();',
+    'expect(x).toBe(1); await page.request.post("http://localhost:3000/api/admin", { data });',
+    'expect(await page.goto("http://[::1]:6379/")).toBeTruthy();',
+    'expect(baseURL).toBe("http://localhost:3000"); await page.request.post(baseURL);',
+    'expect(page.goto("http://localhost:3000")).toEqual("http://localhost:3000");'
+  ];
+  for (const text of blocked) assert.ok(validateCandidateDiff(diff(text)).some(item => item.reason === 'New URL in runtime or browser test'), text);
+  for (const text of ['expect(baseURL).toBe("http://localhost:3000");', "expect(baseURL).toEqual('http://127.0.0.1:3000/');"]) assert.deepEqual(validateCandidateDiff(diff(text)), []);
+});
+
+test('deleted-file diagnostics retain the removed file path rather than the previous diff path', () => {
+  const combined = diff('documentation', 'docs/readme.md') + 'diff --git a/e2e/deleted.spec.ts b/e2e/deleted.spec.ts\n--- a/e2e/deleted.spec.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-expect(value).toBe(true);\n';
+  const findings = validateCandidateDiff(combined);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'e2e/deleted.spec.ts');
+});
+
 test('actual git diffs cannot spoof a docs header from inside a source hunk or skip plus-prefixed code', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'retro-diff-header-'));
   const execute = promisify(execFile);

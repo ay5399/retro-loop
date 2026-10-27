@@ -44,9 +44,10 @@ export function validateCandidateDiff(diff) {
   const diagnostics = [];
   let file = '(diff)', line = 0, inHunk = false;
   for (const entry of diff.split('\n')) {
-    if (entry.startsWith('diff --git ')) { inHunk = false; continue; }
+    if (entry.startsWith('diff --git ')) { inHunk = false; file = '(diff)'; continue; }
     // Added source text may itself start with ++/--. Only metadata outside a
     // hunk can name a file or be skipped as a header.
+    if (!inHunk && entry.startsWith('--- a/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
     if (!inHunk && entry.startsWith('+++ b/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
     const hunk = entry.match(/^@@ .* \+(\d+)/);
     if (hunk) { line = Number(hunk[1]); inHunk = true; continue; }
@@ -65,8 +66,12 @@ export function validateCandidateDiff(diff) {
       if (/process\s*(?:\.\s*env|\[\s*["']env["']\s*\])/.test(text)) add('Runtime environment or credential access', file.startsWith('e2e/') ? 'Do not add environment switches to bypass baseline assertions. Use recorded existing baseline screenshots and preserve assertions.' : 'Use existing approved configuration; do not introduce runtime credential access.');
       if (/\bfetch\s*\(|\brequire\s*\(|\bimport\s*\(|from\s+["'](?:@.*sdk|.*genai|node:child_process|child_process)/.test(text)) add('New network call, dynamic code loading, or SDK access', 'Use the existing mock interface and approved imports; do not add fetch calls, including loopback fetch calls.');
       const urls = text.match(/https?:\/\/[^\s"'`<>)]*/g) ?? [];
+      // Only a complete standalone comparison of the existing baseURL variable
+      // is exempt. Assertion callbacks, calls, compound statements, and navigation
+      // are never evidence that a URL is merely a comparison literal.
+      const comparison = text.match(/^\s*expect\s*\(\s*baseURL\s*\)\s*\.\s*(?:toBe|toEqual)\s*\(\s*(["'])(http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s"'\\]*)?)\1\s*\)\s*;?\s*$/);
       for (const url of urls) {
-        const literalLoopbackAssertion = file.startsWith('e2e/') && /\bexpect\s*\(|\bassert\./.test(text) && /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(url);
+        const literalLoopbackAssertion = file.startsWith('e2e/') && comparison?.[2] === url;
         if (!literalLoopbackAssertion) add('New URL in runtime or browser test', 'Use the existing baseURL and mock fixtures; only literal loopback assertions are allowed without owner approval.');
       }
     }
