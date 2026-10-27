@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { chromium, expect } from '@playwright/test';
 const root = fileURLToPath(new URL('../../', import.meta.url));
+export async function fixtureSdkAliases(repositoryRoot = root) {
+  const installed = createRequire(path.join(repositoryRoot, 'package.json'));
+  const lock = JSON.parse(await readFile(path.join(repositoryRoot, 'package-lock.json'), 'utf8'));
+  const aliases = {};
+  for (const name of ['ai', '@ai-sdk/react']) {
+    const metadata = JSON.parse(await readFile(installed.resolve(`${name}/package.json`), 'utf8'));
+    if (metadata.version !== lock.packages?.[`node_modules/${name}`]?.version) throw new Error(`Installed ${name} does not match the locked fixture SDK version`);
+    aliases[name] = await realpath(installed.resolve(name));
+  }
+  return aliases;
+}
 export function assertSafeStylesheet(css) {
   const postcss = createRequire(path.join(root, 'package.json'))('postcss');
   postcss.parse(css).walkAtRules(rule => {
@@ -25,7 +36,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
   assertSafeStylesheet(candidateCss);
   const modulesDir = await realpath(path.join(root, 'node_modules'));
   const fixtureFiles = await Promise.all(['live-ui-entry.tsx', 'live-ui-store.ts'].map(f => realpath(path.join(root, 'scripts/automation', f))));
-  await build({ absWorkingDir: root, nodePaths: [path.join(root, 'node_modules')], tsconfigRaw: { compilerOptions: { baseUrl: sourceRoot, paths: { '@/*': ['src/*'] } } }, entryPoints: ['scripts/automation/live-ui-entry.tsx'], outfile: path.join(dir, 'app.js'), bundle: true, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'synthetic-actions', setup(b) {
+  await build({ absWorkingDir: root, nodePaths: [path.join(root, 'node_modules')], alias: await fixtureSdkAliases(), tsconfigRaw: { compilerOptions: { baseUrl: sourceRoot, paths: { '@/*': ['src/*'] } } }, entryPoints: ['scripts/automation/live-ui-entry.tsx'], outfile: path.join(dir, 'app.js'), bundle: true, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'synthetic-actions', setup(b) {
     b.onResolve({ filter: /^\.\.\/\.\.\/src\// }, args => args.importer.endsWith('live-ui-entry.tsx') ? { path: path.join(sourceRoot, args.path.slice(6) + '.tsx') } : undefined);
     b.onResolve({ filter: /^\.\/actions$/ }, args => args.importer.endsWith('kpt-board.client.tsx') ? { path: path.join(root, 'scripts/automation/live-ui-store.ts') } : undefined);
     b.onLoad({ filter: /.*/ }, async args => {
