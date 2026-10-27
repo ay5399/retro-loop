@@ -379,7 +379,7 @@ async function resumePendingRelease(previous) {
       return develop('normal', { previous: { ...previous, task: recoveryTask, reason: diagnostics }, existingRelease: { task: recoveryTask, diagnostics, reviewAttempts: 1 } });
     }
     const released = await release(dir, sha, task.pr, task.issue);
-    return { status: released === false ? 'awaiting-release-conditions' : 'released', sha, pr: task.pr, prevention: task.result.prevention, evidence };
+    return { status: released === false ? 'awaiting-release-conditions' : 'released', sha, pr: task.pr, prevention: task.result.prevention, evidence, ciEstimateMs: (await json(path.join(runDir, 'resumed-release-ci.json'), {})).durationMs ?? TASK_TIMING.minCiMs };
   });
 }
 async function prepareRecovery(previous, dir) {
@@ -503,7 +503,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
       if (attempt === 3) throw new Error(`Plan not approved after 3 reviews: ${feedback}`);
     }
     await recordTask({ plan, stage: 'implementation' });
-    let result = plan.decision === 'no-change' ? { ...plan, noChange: true } : await generate(`${baseInstruction}\nImplement only this independently approved plan: ${JSON.stringify(plan)}${existingRelease ? `\nRepair the SAME existing PR #${existingRelease.task.pr}. Address these review/rebase diagnostics, preserve the original feature, and add recurrence prevention: ${existingRelease.diagnostics}. Prior result: ${JSON.stringify(existingRelease.task.result)}` : ''}`, existingRelease ? 'fix-resumed-release' : 'implementation-1');
+    let result = plan.decision === 'no-change' ? { ...plan, noChange: true } : await generate(`${baseInstruction}\nImplement only this independently approved plan: ${JSON.stringify(plan)}${existingRelease ? `\nRepair the SAME existing PR #${existingRelease.task.pr}. Address these review/rebase diagnostics, preserve the original feature, and add recurrence prevention: ${existingRelease.diagnostics}. Prior result: ${JSON.stringify(existingRelease.task.result)}` : ''}`, existingRelease ? 'implementation-resumed-release' : 'implementation-1');
     if (plan.decision === 'no-change') { await note(`変更なし: ${result.summary}`); return kind === 'mutation' ? null : { status: 'no-change', ciEstimateMs }; }
     await recordTask({ result });
     let files, sha, verdict, evidence;
@@ -552,7 +552,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
         if (verdict?.verdict === 'reject' || verdict?.verdict !== 'approve' && verdict?.risk && verdict.risk !== 'reversible') throw new Error(`Implementation rejected or requires approval: ${verdict.reason}`);
         if (attempt === 3) throw new Error(`Unresolved after 3 implementation/review/validation attempts: ${error.message}; ${verdict?.reason ?? ''}`);
         // Keep the same worktree and accumulated changes; never start a different improvement.
-        ciEstimateMs = (await json(path.join(runDir, `${taskTag}-after-${attempt}-ci.json`), {})).durationMs ?? ciEstimateMs;
+        ciEstimateMs = Math.max(ciEstimateMs, (await json(path.join(runDir, `${taskTag}-after-${attempt}-ci.json`), {})).durationMs ?? 0);
         generationBudget({ deadline, now: Date.now(), mode: kind === 'mutation' ? 'mutation' : 'normal', stage: 'fix', ciMs: ciEstimateMs });
         const failureLogs = [];
         for (const file of (await readdir(runDir)).filter(name => name === `${taskTag}-after-${attempt}-checks.log` || name === `${taskTag}-live-ai-${attempt}.log`)) {
