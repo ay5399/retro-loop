@@ -611,12 +611,17 @@ async function adopt(exp) {
 }
 async function release(dir, sha, pr, issue) {
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Production halt must be reconciled before any release; never redispatch an uncertain release.');
+  const deferForTime = async () => {
+    await save(path.join(runDir, 'release-deferred.json'), { sha, pr, problems: ['Insufficient time to merge, deploy and confirm rollback; reviewed PR remains unmerged.'], remainingMs: deadline - Date.now(), requiredMs: TASK_TIMING.releaseMs });
+    return false;
+  };
   const problems = auditProblems(policy, await json(path.join(stateDir, 'audit.json'), {}));
   if (problems.length) {
     await save(path.join(runDir, 'release-deferred.json'), { sha, pr, problems });
     await note(`実装・レビュー・検証済み。PRを未マージで保留します。本番反映の未完了条件:\n\n${problems.map(p => `- ${p}`).join('\n')}`, issue);
     return false;
   }
+  if (deadline - Date.now() < TASK_TIMING.releaseMs) return deferForTime();
   const environment = (await api(`repos/${policy.repository}/environments/production`)).flat()[0];
   const branches = (await api(`repos/${policy.repository}/environments/production/deployment-branch-policies`)).flatMap(p => p.branch_policies ?? []);
   if (!environment.deployment_branch_policy?.custom_branch_policies || branches.length !== 1 || branches[0].name !== 'main' || branches[0].type !== 'branch') throw new Error('Production environment must allow only the main branch');
@@ -632,7 +637,7 @@ async function release(dir, sha, pr, issue) {
   await git(['fetch', 'origin', 'main'], dir);
   const base = await git(['rev-parse', 'origin/main'], dir);
   if (info.baseRefOid !== base || await git(['merge-base', 'origin/main', 'HEAD'], dir) !== base) throw new Error('main advanced; review a refreshed branch');
-  if (deadline - Date.now() < TASK_TIMING.releaseMs) throw new Error('Insufficient time to merge, deploy and confirm rollback; leave reviewed PR unmerged');
+  if (deadline - Date.now() < TASK_TIMING.releaseMs) return deferForTime();
   await gh(['pr', 'merge', String(pr), '--repo', policy.repository, '--squash', '--match-head-commit', sha]);
   const merged = JSON.parse(await gh(['pr', 'view', String(pr), '--repo', policy.repository, '--json', 'mergeCommit'])).mergeCommit.oid;
   await git(['fetch', 'origin', 'main'], dir);

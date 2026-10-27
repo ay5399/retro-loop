@@ -18,7 +18,9 @@ test('generation leaves enough for actual review/live AI/both CI/artifacts/publi
   assert.equal(timeoutMs, minute);
   const nonRelease = 2 * TASK_TIMING.minCiMs + TASK_TIMING.reviewMs + TASK_TIMING.liveAiMs + TASK_TIMING.artifactMs + TASK_TIMING.publishMs;
   assert.equal(deadline - (now + timeoutMs + nonRelease), TASK_TIMING.releaseMs);
-  assert.throws(() => generationBudget({ deadline, now: 25 * minute, stage: 'fix' }), /Checkpoint.*unresolved/);
+  assert.throws(() => generationBudget({ deadline, now: 25 * minute, stage: 'implementation' }), /Checkpoint.*unresolved/);
+  assert.deepEqual(generationBudget({ deadline, now: 25 * minute, stage: 'fix' }), { timeoutMs: 240_000 });
+  assert.throws(() => generationBudget({ deadline, now: 70 * minute, stage: 'fix' }), /Checkpoint.*unresolved/);
 });
 
 test('planning reserves its own independent review and following full implementation', () => {
@@ -29,9 +31,9 @@ test('planning reserves its own independent review and following full implementa
 });
 
 test('longer measured CI and review are reserved; shorter estimates cannot weaken actual limits', () => {
-  assert.throws(() => generationBudget({ deadline: 66 * minute, now: 0, stage: 'fix', ciMs: 5 * minute }), /Insufficient time/);
-  assert.deepEqual(generationBudget({ deadline: 66 * minute, now: 0, stage: 'fix', ciMs: 1, reviewMs: 1, releaseMs: 1 }), { timeoutMs: minute });
-  assert.throws(() => generationBudget({ deadline: 66 * minute, now: 0, stage: 'fix', reviewMs: 10 * minute }), /Insufficient time/);
+  assert.throws(() => generationBudget({ deadline: 66 * minute, now: 0, stage: 'implementation', ciMs: 5 * minute }), /Insufficient time/);
+  assert.deepEqual(generationBudget({ deadline: 66 * minute, now: 0, stage: 'implementation', ciMs: 1, reviewMs: 1, releaseMs: 1 }), { timeoutMs: minute });
+  assert.throws(() => generationBudget({ deadline: 66 * minute, now: 0, stage: 'implementation', reviewMs: 10 * minute }), /Insufficient time/);
 });
 
 test('mutation admission includes baseline, all three plan reviews, implementation and two verification workflows', () => {
@@ -86,20 +88,21 @@ test('actual admission defers new normal work with 72 minutes after recovery usi
   assert.equal(taskAdmissionBudget({ deadline: 90 * minute, now: 0, mode: 'normal', ciMs: 869_000 }).admitted, false);
 });
 
-test('measured 204 second CI and 75 second review permit two correction rounds in the same normal run', () => {
+test('each attempt consumes real CI and evidence time; corrections finish while release retains its full gate', () => {
   // https://github.com/ay5399/retro-loop/actions/runs/40574172129
   // 2026-10-27 20:00:32Z..20:03:56Z = 204 s; stability-review.json records ~75 s.
-  // Three is the attempt ceiling, not permission to exceed 90 minutes: long CI
-  // failures can consume the remaining reserve and must retain an unresolved checkpoint.
+  // Every approved attempt runs live validation/CI before discovering missing
+  // evidence. Corrections finish now; a completed PR can wait for release conditions.
   const ciMs = 204_000, reviewElapsed = 75_000, deadline = 90 * minute;
   let now = ciMs;
   now += generationBudget({ deadline, now, stage: 'planning', ciMs }).timeoutMs + reviewElapsed;
   for (const stage of ['implementation', 'fix', 'fix']) {
     now += generationBudget({ deadline, now, stage, ciMs }).timeoutMs + reviewElapsed;
+    now += TASK_TIMING.liveAiMs + ciMs + TASK_TIMING.artifactMs;
   }
-  now += TASK_TIMING.liveAiMs + 2 * ciMs + TASK_TIMING.artifactMs + TASK_TIMING.publishMs;
-  assert.ok(deadline - now >= TASK_TIMING.releaseMs);
-  // Maximum-duration failures cannot be guaranteed three retries inside 90 minutes.
-  // The same reserve check stops before generation would consume release time.
-  assert.throws(() => generationBudget({ deadline, now: 30 * minute, stage: 'fix', ciMs }), /Checkpoint.*unresolved/);
+  now += ciMs + TASK_TIMING.publishMs;
+  assert.ok(now < deadline);
+  assert.ok(deadline - now < TASK_TIMING.releaseMs);
+  assert.deepEqual(generationBudget({ deadline, now: 30 * minute, stage: 'fix', ciMs }), { timeoutMs: 240_000 });
+  assert.throws(() => generationBudget({ deadline, now: 30 * minute, stage: 'implementation', ciMs }), /Checkpoint.*unresolved/);
 });

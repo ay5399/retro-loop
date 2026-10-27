@@ -7,12 +7,13 @@ function durations({ deadline, now = Date.now(), mode = 'normal', ciMs = TASK_TI
   return { remainingMs: deadline - now, ciMs: Math.max(TASK_TIMING.minCiMs, ciMs), reviewMs: Math.max(TASK_TIMING.reviewMs, reviewMs), liveAiMs, releaseMs: mode === 'mutation' ? 0 : Math.max(TASK_TIMING.releaseMs, releaseMs) };
 }
 
-/** Each planning retry is admitted again; do not consume the following implementation/release reserve. */
+/** Initial work reserves release; corrections finish review/validation before deferring the same PR if needed. */
 export function generationBudget(options) {
   const { stage } = options;
   if (!Object.hasOwn(caps, stage)) throw new Error(`Unknown generation stage: ${stage}`);
   const timing = durations(options);
-  const reservedMs = 2 * timing.ciMs + timing.releaseMs + timing.reviewMs + timing.liveAiMs + TASK_TIMING.artifactMs + TASK_TIMING.publishMs + (stage === 'planning' ? timing.reviewMs + caps.implementation : 0);
+  const releaseReserveMs = stage === 'fix' ? 0 : timing.releaseMs;
+  const reservedMs = 2 * timing.ciMs + releaseReserveMs + timing.reviewMs + timing.liveAiMs + TASK_TIMING.artifactMs + TASK_TIMING.publishMs + (stage === 'planning' ? timing.reviewMs + caps.implementation : 0);
   const availableMs = timing.remainingMs - reservedMs;
   if (availableMs < TASK_TIMING.minGenerationMs) throw new Error(`Insufficient time for ${options.mode ?? 'normal'} ${stage}: remaining ${timing.remainingMs}ms; required at least ${reservedMs + TASK_TIMING.minGenerationMs}ms (CI, independent review, live AI, artifacts, publishing and release reserved). Checkpoint the current work, failure diagnostics and verification evidence as unresolved; do not claim completion.`);
   return { timeoutMs: Math.min(caps[stage], Math.floor(availableMs)) };

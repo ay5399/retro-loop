@@ -15,9 +15,13 @@ const end = source.indexOf('async function adopt(exp) {');
 assert.ok(start >= 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false } = {}) {
+async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1 } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'retro-recovery-'));
   const calls = [];
+  let elapsedMs = 0;
+  const clockStart = Date.now();
+  const advance = ms => { if (elapsedClock) elapsedMs += ms; };
+  const ClockDate = class extends Date { static now() { return clockStart + elapsedMs; } };
   try {
     const runDir = path.join(dir, 'logs');
     await mkdir(runDir);
@@ -35,15 +39,17 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     const plan = { ...result };
     delete plan.noChange;
     const context = {
-      path, createHash, requireReview, generationBudget, TASK_TIMING, collectEvidence, safeEnv: extra => extra,
+      path, createHash, requireReview, generationBudget, TASK_TIMING, Date: elapsedClock ? ClockDate : Date,
+      collectEvidence: async options => { advance(TASK_TIMING.artifactMs); return collectEvidence(options); }, safeEnv: extra => extra,
       prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, runDir, runId: 'fixture', stateDir: dir,
-      deadline: Date.now() + 90 * 60_000, now: new Date(),
+      deadline: clockStart + 90 * 60_000, now: new Date(),
       config: { repositoryPath: dir }, policy: { repository: 'test/repo', protectedPaths: [], productDirection: {}, liveAiVerification: { enabled: resumeLiveFailure } },
       workspace: async () => dir, withWorkspace: async (dir, callback) => callback({}),
       readFile, writeFile, readdir, cp, lstat,
       json: async (file, fallback) => { try { return JSON.parse(await readFile(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } },
       save: async (file, value) => writeFile(file, JSON.stringify(value)),
       checks: async (dir, tag) => {
+        advance(4 * 60_000);
         calls.push(['checks', tag]);
         if (tag === 'resumed-release' && resumeCiStatus) {
           await writeFile(path.join(runDir, 'resumed-release-ci.json'), JSON.stringify({ status: resumeCiStatus }));
@@ -77,11 +83,12 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
         }
         assert.equal(name, 'codex');
         const planning = args[args.indexOf('--output-schema') + 1].endsWith('plan.schema.json');
+        advance(options.timeout);
         calls.push([planning ? 'plan' : 'implement', options.input]);
         assert.equal(args[args.indexOf('--sandbox') + 1], planning ? 'read-only' : 'workspace-write');
         if (!planning) {
           implementations++;
-          if (implementations > 1) {
+          if (implementations > missingEvidenceFailures) {
             await writeFile(path.join(dir, proof), png);
             await writeFile(path.join(dir, 'docs/repair.md'), 'correct UTF-8 repair');
           }
@@ -89,20 +96,21 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
         await writeFile(args[args.indexOf('--output-last-message') + 1], JSON.stringify(planning ? { ...plan, decision } : { ...result, noChange: implementNoChange && implementations === 1 }));
         await writeFile(options.log, 'fixture model log');
       },
-      review: async (dir, sha, result, options = {}) => { calls.push(['review', options.planning ? 'plan' : 'implementation', sha]); return { sha, verdict: reviewChoices[reviewNumber++] ?? 'approve', risk: 'reversible', reason: 'fix review finding with regression coverage' }; },
+      review: async (dir, sha, result, options = {}) => { advance(TASK_TIMING.reviewMs); calls.push(['review', options.planning ? 'plan' : 'implementation', sha]); return { sha, verdict: reviewChoices[reviewNumber++] ?? 'approve', risk: 'reversible', reason: 'fix review finding with regression coverage' }; },
       auditProblems: () => [],
       note: async () => 1, gh: async args => {
+        if (args[0] === 'pr' && args[1] === 'create') advance(TASK_TIMING.publishMs);
         if (resume) calls.push(['gh', args]);
         if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ state: 'OPEN', headRefOid: '0'.repeat(40) });
         return 'https://github.com/test/repo/pull/1';
       },
       jstDate: () => '2026-10-26', changedPathsBlocked: () => [], needsLiveAiVerification: () => resumeLiveFailure,
-      release: async () => { calls.push(['release']); return true; },
+      release: async () => { calls.push(['release']); advance(4 * 60_000); return !elapsedClock || clockStart + 90 * 60_000 - ClockDate.now() >= TASK_TIMING.releaseMs; },
     };
     const resumeDeclaration = source.slice(source.indexOf('async function resumePendingRelease('), source.indexOf('async function prepareRecovery('));
     const prior = { id: 'old-run', dir: runDir, reason: 'Previous release incomplete', task: { kind: 'normal', sha: '0'.repeat(40), branch: localRecoveryCheckpoint ? 'auto/normal-local-recovery' : 'auto/normal-original', ...(localRecoveryCheckpoint ? { remoteBranch: 'auto/normal-original', remoteHeadSha: '0'.repeat(40) } : {}), pr: 123, issue: 456, result, stage: 'awaiting-release' } };
     const run = new AsyncFunction(...Object.keys(context), (resume ? resumeDeclaration : '') + source.slice(start, end) + (resume ? `\nreturn resumePendingRelease(${JSON.stringify(prior)});` : '\nreturn develop("normal", ' + JSON.stringify(previous ? { previous: { id: 'old-run', reason: 'previous evidence missing' } } : {}) + ');'));
-    try { return { result: await run(...Object.values(context)), calls }; }
+    try { const outcome = await run(...Object.values(context)); return { result: outcome, calls, elapsedMs, checkpoint: await context.json(path.join(runDir, 'task.json'), null) }; }
     catch (error) { return { error, calls }; }
   } finally {
     assert.ok(path.resolve(dir).startsWith(path.resolve(tmpdir()) + path.sep));
@@ -182,6 +190,22 @@ test('read-only plan with a useful candidate advances through review, implementa
   assert.equal(run.error, undefined);
   assert.equal(run.result.status, 'released');
   assert.deepEqual(run.calls.map(call => call[0]), ['checks', 'plan', 'review', 'implement', 'review', 'checks', 'release']);
+});
+
+test('elapsed real develop repairs two missing-evidence attempts and completes third review/CI before retaining the same unmerged PR', async () => {
+  const run = await runScenario({ elapsedClock: true, missingEvidence: true, missingEvidenceFailures: 2 });
+  assert.equal(run.error, undefined);
+  assert.equal(run.result.status, 'awaiting-release-conditions');
+  assert.equal(run.result.pr, 1);
+  assert.equal(run.checkpoint.pr, 1);
+  assert.equal(run.checkpoint.stage, 'awaiting-release-conditions');
+  assert.equal(run.checkpoint.sha, run.result.sha);
+  assert.equal(run.calls.filter(call => call[0] === 'implement').length, 3);
+  assert.equal(run.calls.filter(call => call[0] === 'review' && call[1] === 'implementation').length, 3);
+  assert.equal(run.calls.filter(call => call[0] === 'checks').length, 4);
+  assert.equal(run.calls.filter(call => call[0] === 'release').length, 1);
+  assert.ok(run.elapsedMs > 45 * 60_000);
+  assert.ok(run.elapsedMs < 90 * 60_000);
 });
 
 test('genuine no-change still requires independent planning review and never implements', async () => {

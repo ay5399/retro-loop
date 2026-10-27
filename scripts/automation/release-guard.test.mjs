@@ -16,7 +16,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const sha = 'a'.repeat(40), merged = 'b'.repeat(40);
 const previous = { id: 'previous', task: { kind: 'normal', pr: 17, sha, branch: 'auto/normal-previous', result: { prevention: 'Regression test' } } };
 
-async function fixture(run, info = { state: 'OPEN', headRefOid: sha }, releaseProblems = []) {
+async function fixture(run, info = { state: 'OPEN', headRefOid: sha }, releaseProblems = [], remainingMinutes = 90) {
   const root = await mkdtemp(path.join(tmpdir(), 'retro-release-guard-'));
   const stateDir = path.join(root, 'state'), runDir = path.join(root, 'run');
   const calls = [];
@@ -35,7 +35,7 @@ async function fixture(run, info = { state: 'OPEN', headRefOid: sha }, releasePr
     };
     const context = {
       path, stateDir, runDir, json, save, gh, TASK_TIMING,
-      policy: { repository: 'test/repo' }, deadline: Date.now() + 90 * 60_000,
+      policy: { repository: 'test/repo' }, deadline: Date.now() + remainingMinutes * 60_000,
       auditProblems: () => releaseProblems,
       api: async endpoint => {
         calls.push(['api', endpoint]);
@@ -98,6 +98,15 @@ for (const info of [{ state: 'CLOSED', headRefOid: sha }, { state: 'OPEN', headR
     assert.deepEqual(calls.map(call => call[0]), ['gh']);
   }, info));
 }
+
+test('insufficient release time retains the verified PR as waiting without merging or dispatching', async () => fixture(async ({ release, calls, runDir, json }) => {
+  assert.equal(await release('unused', sha, 17, 18), false);
+  const deferred = await json(path.join(runDir, 'release-deferred.json'));
+  assert.equal(deferred.pr, 17);
+  assert.equal(deferred.sha, sha);
+  assert.equal(deferred.requiredMs, TASK_TIMING.releaseMs);
+  assert.deepEqual(calls, []);
+}, undefined, [], 44));
 
 test('successful release remains successful when result notification fails', async () => fixture(async ({ release, calls, stateDir, runDir, json }) => {
   assert.equal(await release('unused', sha, 17, 18), true);
