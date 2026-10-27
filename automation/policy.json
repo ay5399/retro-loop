@@ -8,6 +8,7 @@
   "monthlyLimitYen": 1000,
   "operatingLimitYen": 800,
   "allowPaidUsage": false,
+  "startupRecovery": { "enabled": true, "temporary": true },
   "requireDedicatedWindowsUser": false,
   "githubAuth": "app",
   "liveAiVerification": { "enabled": true, "maxTurns": 3, "timeoutSeconds": 330, "loopbackOnly": true },

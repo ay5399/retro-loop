@@ -2,19 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { requireReview } from './core.mjs';
+import { generationBudget } from './budget.mjs';
 
 // Exercise the controller's real retry block without models, GitHub or production.
 const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
-const implementationStart = source.indexOf('    let files, sha, verdict;');
-const implementationEnd = source.indexOf('    for (const image of result.screenshots)');
+const implementationStart = source.indexOf('    let files, sha, verdict, evidence;');
+const implementationEnd = source.indexOf('    await save(path.join(runDir, `${taskTag}-proposal.json`)');
 assert.ok(implementationStart >= 0 && implementationEnd > implementationStart);
 const block = source.slice(implementationStart, implementationEnd);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 async function simulate(verdicts, failingChecks = 0) {
   const calls = [], records = [];
   let commits = 0, reviews = 0, checks = 0;
-  const result = { title: 'test', sources: ['https://example.com'], screenshots: ['proof.png'] };
+  const result = { title: 'test', sources: ['https://example.com'], screenshots: ['proof.png'], prevention: 'regression coverage' };
   const context = {
+    existingRelease: null,
+    taskTag: 'normal', recovery: null, baselineFailure: '', recordTask: async () => {},
+    generationBudget, ciEstimateMs: 180_000, json: async (file, fallback) => fallback,
     deadline: Date.now() + 90 * 60_000, result, plan: {}, dir: 'worktree', runDir: 'logs', kind: 'normal', branch: 'auto/test', policy: {}, baseInstruction: '',
     git: async args => {
       if (args[0] === 'commit') { commits++; return ''; }
@@ -23,6 +27,7 @@ async function simulate(verdicts, failingChecks = 0) {
       return '';
     },
     changedPathsBlocked: () => [], needsLiveAiVerification: () => false, requireReview,
+    collectEvidence: async () => [], validateCandidateTextFiles: async () => [], validateCandidateDiff: () => [], assertCandidateValid: () => {},
     review: async (dir, sha) => { calls.push(`review:${sha}`); const choice = verdicts[reviews++] ?? 'approve'; return { sha, verdict: typeof choice === 'string' ? choice : choice.verdict, reason: 'findings to fix', risk: typeof choice === 'string' ? 'reversible' : choice.risk }; },
     checks: async () => { calls.push('checks'); if (checks++ < failingChecks) throw new Error('CI broken'); },
     save: async (file, record) => records.push(record), path: { join: (...parts) => parts.join('/') },
@@ -57,7 +62,8 @@ test('plan must be approved after researched revisions before implementation', a
   let revisions = 0, reviews = 0;
   const plans = [];
   const context = {
-    baselineFailure: '', git: async () => '', dir: 'worktree', baseInstruction: 'research competitors and user problems', runDir: 'logs', kind: 'normal',
+    existingRelease: null,
+    baselineFailure: '', recovery: null, taskTag: 'normal', recordTask: async () => {}, git: async () => '', dir: 'worktree', baseInstruction: 'research competitors and user problems', runDir: 'logs', kind: 'normal',
     generate: async prompt => { revisions++; assert.match(prompt, /PLANNING ONLY/); return { sources: ['https://example.com'], decision: 'implement', summary: `plan ${revisions}` }; },
     createHash: () => ({ update: value => ({ digest: () => value.length.toString(16).padStart(40, '0') }) }),
     review: async (dir, sha, plan, options) => { assert.equal(options.planning, true); return { sha, verdict: ++reviews < 3 ? 'revise' : 'approve', risk: 'reversible', reason: 'improve evidence' }; },

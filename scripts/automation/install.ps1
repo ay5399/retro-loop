@@ -3,6 +3,19 @@ $ErrorActionPreference = 'Stop'
 $repositoryPath = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $statePath = Join-Path $env:LOCALAPPDATA 'RetroLoopAutomation'
 New-Item -ItemType Directory -Path $statePath -Force | Out-Null
+# Use the runner's own exclusive lock so scheduled/manual launches cannot race
+# an installation and import a partially updated runtime.
+$installLockPath = Join-Path $statePath 'runner.lock'
+try {
+  $installLock = [IO.File]::Open($installLockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+} catch [IO.IOException] {
+  throw 'Automation is running or its runner.lock still exists. Installation refused before changing runtime files.'
+}
+try {
+  $lockEncoding = New-Object System.Text.UTF8Encoding($false)
+  $lockBytes = $lockEncoding.GetBytes((@{ pid = $PID; startedAt = [DateTime]::UtcNow.ToString('o'); purpose = 'installation' } | ConvertTo-Json -Compress))
+  $installLock.Write($lockBytes, 0, $lockBytes.Length)
+  $installLock.Flush()
 New-Item -ItemType Directory -Path (Join-Path $statePath 'runtime') -Force | Out-Null
 $nodePath = (Get-Command node.exe).Source
 $codexCommand = (Get-Command codex).Source
@@ -22,7 +35,7 @@ foreach ($name in @('claude', 'gh', 'git')) {
 $encoding = New-Object System.Text.UTF8Encoding($false)
 $installation = @{ repositoryPath = $repositoryPath; commands = $commands }
 [IO.File]::WriteAllText((Join-Path $statePath 'installation.json'), ($installation | ConvertTo-Json -Depth 8), $encoding)
-foreach ($file in @('run.mjs', 'core.mjs', 'github-app.mjs')) {
+foreach ($file in @('core.mjs', 'github-app.mjs', 'workflow.mjs', 'candidate.mjs', 'evidence.mjs', 'history.mjs', 'budget.mjs')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $statePath "runtime/$file") -Force
 }
 foreach ($file in @('policy.json', 'plan.schema.json', 'result.schema.json', 'review.schema.json')) {
@@ -44,6 +57,8 @@ if (!(Test-Path -LiteralPath (Join-Path $statePath 'audit.json'))) {
   $audit = @{ policyHash = ''; autoRechargeDisabled = $false; productionLiveCallsDisabled = $false; rollbackLiveCallsDisabled = $false; vercelGitDeploymentsDisabled = $false; services = $services }
   [IO.File]::WriteAllText((Join-Path $statePath 'audit.json'), ($audit | ConvertTo-Json -Depth 8), $encoding)
 }
+# Publish the entry point last, after all modules and configuration are in place.
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'run.mjs') -Destination (Join-Path $statePath 'runtime/run.mjs') -Force
 if (!$SkipTaskRegistration) {
   if ((Get-TimeZone).Id -ne 'Tokyo Standard Time') { throw 'Task registration requires the Windows timezone to be Tokyo Standard Time.' }
   # Launch Node directly: no dependency on PowerShell's script execution policy.
@@ -61,3 +76,8 @@ if (!$SkipTaskRegistration) {
 }
 Write-Output "Installed: $statePath"
 Write-Output 'Existing audit is preserved. Development and production release prerequisites are checked separately; run launch.ps1 --dry-run for current status (exit 2 = blocked).'
+
+} finally {
+  $installLock.Dispose()
+  Remove-Item -LiteralPath $installLockPath -Force
+}
