@@ -1,8 +1,9 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["title", "summary", "noChange", "risk", "sources", "screenshots", "assumption", "successCriteria"],
+  "required": ["title", "summary", "noChange", "risk", "sources", "screenshots", "assumption", "successCriteria", "prevention"],
   "properties": {
+    "prevention": { "type": "string", "description": "Concrete recurrence prevention and regression scenario; distinguish proven tests from planned validation." },
     "title": { "type": "string" },
     "summary": { "type": "string" },
     "noChange": { "type": "boolean" },
