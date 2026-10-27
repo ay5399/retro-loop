@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,6 +63,15 @@ async function fixture(run, info = { state: 'OPEN', headRefOid: sha }, releasePr
     await run({ ...functions, calls, stateDir, runDir, json, save });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('legacy release checkpoints require owner identification without repeating failed work or replacing the PR', async () => fixture(async ({ resumePendingRelease, calls, runDir, json }) => {
+  for (const legacy of [{ id: 'old-run', result: { status: 'awaiting-release', pr: 17 } }, { ...previous, task: { ...previous.task, result: {} } }]) {
+    const outcome = await resumePendingRelease(legacy);
+    assert.equal(outcome.status, 'awaiting-approval');
+    assert.equal((await json(path.join(runDir, 'task.json'))).stage, 'awaiting-approval');
+    assert.deepEqual(calls, []);
+  }
+}));
 
 test('production halt prevents release and pending-release resume before any external or new-work call', async () => fixture(async ({ release, resumePendingRelease, calls, stateDir, save }) => {
   await save(path.join(stateDir, 'halt.json'), { sha: merged, run: 91 });

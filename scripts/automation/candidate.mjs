@@ -1,8 +1,26 @@
-﻿import path from 'node:path';
+import path from 'node:path';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 
 const textExtensions = /\.(?:[cm]?[jt]sx?|json|mdx?|txt|html|css|scss|ya?ml|toml|xml|svg|sh|ps1|sql|prisma|env|csv)$/i;
 const issue = (file, line, reason, guidance) => ({ file, line, reason, guidance });
+
+function diffHeaderPath(raw) {
+  // Git appends a delimiter tab when a path contains spaces. Literal filename
+  // tabs are C-escaped inside quotes, so this delimiter is never path content.
+  raw = raw.replace(/\t$/, '');
+  if (!raw.startsWith('"')) return raw;
+  if (!raw.endsWith('"')) throw new Error('Invalid quoted Git diff path');
+  const encoded = raw.slice(1, -1), bytes = [];
+  const escapes = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '"': 34, '\\': 92 };
+  let consumed = 0;
+  for (const match of encoded.matchAll(/\\([0-7]{1,3}|[abfnrtv"\\])|([^\\]+)/g)) {
+    if (match.index !== consumed) throw new Error('Invalid escape in Git diff path');
+    bytes.push(match[2] === undefined ? Buffer.of(/^[0-7]/.test(match[1]) ? Number.parseInt(match[1], 8) : escapes[match[1]]) : Buffer.from(match[2], 'utf8'));
+    consumed += match[0].length;
+  }
+  if (consumed !== encoded.length) throw new Error('Incomplete escape in Git diff path');
+  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(bytes));
+}
 
 export async function validateCandidateTextFiles(root, files) {
   const diagnostics = [];
@@ -47,8 +65,14 @@ export function validateCandidateDiff(diff) {
     if (entry.startsWith('diff --git ')) { inHunk = false; file = '(diff)'; continue; }
     // Added source text may itself start with ++/--. Only metadata outside a
     // hunk can name a file or be skipped as a header.
-    if (!inHunk && entry.startsWith('--- a/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
-    if (!inHunk && entry.startsWith('+++ b/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
+    if (!inHunk && /^(?:---|\+\+\+) /.test(entry)) {
+      const header = diffHeaderPath(entry.slice(4).replace(/\r$/, ''));
+      if (header !== '/dev/null') {
+        if (!/^[ab]\//.test(header)) throw new Error('Invalid repository-relative Git diff path');
+        file = header.slice(2);
+      }
+      continue;
+    }
     const hunk = entry.match(/^@@ .* \+(\d+)/);
     if (hunk) { line = Number(hunk[1]); inHunk = true; continue; }
     if (!inHunk) continue;

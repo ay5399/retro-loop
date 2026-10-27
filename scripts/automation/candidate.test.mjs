@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import os from 'node:os';
@@ -66,6 +66,32 @@ test('actual git diffs cannot spoof a docs header from inside a source hunk or s
       { file: 'src/spoof.ts', line: 4 }
     ]);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('actual Git C-quoted Unicode paths remain subject to runtime safety validation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'retro-diff-quoted-'));
+  const execute = promisify(execFile);
+  try {
+    await execute('git', ['init'], { cwd: root });
+    await mkdir(path.join(root, 'src'));
+    const name = 'src/\u65e5\u672c\u8a9e file.ts';
+    await writeFile(path.join(root, name), 'const secret = process.env.TOKEN;\n');
+    await execute('git', ['add', '.'], { cwd: root });
+    const { stdout } = await execute('git', ['-c', 'core.quotePath=true', 'diff', '--cached', '--no-ext-diff'], { cwd: root, encoding: 'utf8' });
+    assert.match(stdout, /^\+\+\+ "b\/src\//m);
+    const findings = validateCandidateDiff(stdout);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].file, name);
+    assert.equal(findings[0].line, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Git C-quoted control characters and quoted deletion paths preserve safety and attribution', () => {
+  const quoted = 'diff --git "a/src/name\\tfile.ts" "b/src/name\\tfile.ts"\n--- "a/src/name\\tfile.ts"\n+++ "b/src/name\\tfile.ts"\n@@ -0,0 +1 @@\n+const secret = process.env.TOKEN;\n';
+  assert.equal(validateCandidateDiff(quoted)[0].file, 'src/name\tfile.ts');
+  const removed = 'diff --git "a/e2e/name\\tfile.spec.ts" "b/e2e/name\\tfile.spec.ts"\n--- "a/e2e/name\\tfile.spec.ts"\n+++ /dev/null\n@@ -1 +0,0 @@\n-expect(x).toBe(true);\n';
+  assert.equal(validateCandidateDiff(removed)[0].file, 'e2e/name\tfile.spec.ts');
+  assert.throws(() => validateCandidateDiff('+++ "b/src/bad\\q.ts"\n'), /Invalid escape/);
 });
 
 test('changed code and docs must be valid UTF-8 without replacement characters', async () => {

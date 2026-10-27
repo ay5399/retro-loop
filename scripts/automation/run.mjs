@@ -1,4 +1,4 @@
-﻿import { spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, open, stat, readdir, cp, lstat, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { userInfo } from 'node:os';
@@ -298,7 +298,9 @@ async function resumePendingRelease(previous) {
   if (releaseProblems.length) return { status: 'awaiting-release-conditions', problems: releaseProblems };
   const task = previous.task;
   if (!task || task.kind !== 'normal' || !Number.isSafeInteger(task.pr) || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !/^auto\/normal-[a-z0-9-]+$/i.test(task.branch ?? '') || !task.result?.prevention?.trim()) {
-    throw new Error('Previous release checkpoint is incomplete; do not create or dispatch a replacement release.');
+    const reason = 'Previous release checkpoint is incomplete; owner must identify and verify the original PR before release can resume.';
+    await save(path.join(runDir, 'task.json'), { ...task, stage: 'awaiting-approval', previousRun: previous.id, reason });
+    return { status: 'awaiting-approval', reason };
   }
   if (task.remoteBranch && !/^auto\/normal-[a-z0-9-]+$/i.test(task.remoteBranch)) throw new Error('Unsafe previous release remote branch');
   const info = JSON.parse(await gh(['pr', 'view', String(task.pr), '--repo', policy.repository, '--json', 'state,headRefOid,mergeCommit']));
