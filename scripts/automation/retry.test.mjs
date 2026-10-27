@@ -18,7 +18,7 @@ async function simulate(verdicts, failingChecks = 0) {
   const context = {
     existingRelease: null,
     taskTag: 'normal', recovery: null, baselineFailure: '', recordTask: async () => {},
-    generationBudget, ciEstimateMs: 180_000, json: async (file, fallback) => fallback,
+    generationBudget, ciEstimateMs: 180_000, json: async (file, fallback) => file.endsWith('-ci.json') && failingChecks ? { status: 'failed' } : fallback,
     deadline: Date.now() + 90 * 60_000, result, plan: {}, dir: 'worktree', runDir: 'logs', kind: 'normal', branch: 'auto/test', policy: {}, baseInstruction: '',
     git: async args => {
       if (args[0] === 'commit') { commits++; return ''; }

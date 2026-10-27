@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -11,6 +11,7 @@ const start = source.indexOf('  const previous = policy.startupRecovery');
 const end = source.indexOf('  const tracking =', start);
 assert.ok(start >= 0 && end > start, 'Actual main startup recovery markers must exist');
 const startupSource = source.slice(start, end);
+const uncertaintySource = source.slice(source.indexOf('async function reconcileUncertainTask('), source.indexOf('async function main()'));
 assert.ok(startupSource.includes('await reconcileStartup'), 'Actual startup must execute the reconciliation helper');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -30,9 +31,9 @@ async function scenario(callback) {
     if (task) await save(path.join(dir, 'task.json'), task);
     return dir;
   };
-  const launch = async (runDir, develop, resumePendingRelease = () => assert.fail('Unexpected release resume'), releaseProblems = []) => {
-    const context = { policy: {}, path, stateDir, runDir, inspectPreviousRun, reconcileStartup, develop, resumePendingRelease, save, json, releaseProblems, process: { exitCode: 0 } };
-    const run = new AsyncFunction(...Object.keys(context), startupSource + '\nreturn recovered;');
+  const launch = async (runDir, develop, resumePendingRelease = () => assert.fail('Unexpected release resume'), releaseProblems = [], overrides = {}) => {
+    const context = { policy: {}, path, stateDir, runDir, inspectPreviousRun, reconcileStartup, develop, resumePendingRelease, save, json, readdir, config: { repositoryPath: stateDir }, gh: async () => assert.fail('Unexpected workflow call'), git: async () => assert.fail('Unexpected remote call'), releaseProblems, process: { exitCode: 0 }, ...overrides };
+    const run = new AsyncFunction(...Object.keys(context), uncertaintySource + startupSource + '\nreturn recovered;');
     return run(...Object.values(context));
   };
   try { await callback({ stateDir, runsDir, add, launch, json, save }); }
@@ -125,7 +126,7 @@ assert.ok(mainPrefixStart > 0 && outerCatchStart > 0 && outerCatchEnd > outerCat
 const earlyMain = source.slice(mainPrefixStart, start);
 const actualOuterCatch = source.slice(outerCatchStart, outerCatchEnd);
 
-async function runEarlyMain({ stateDir, runDir, json, save, auditBlocked = false }) {
+async function runEarlyMain({ stateDir, runDir, json, save, auditBlocked = false, allowInfrastructurePass = false }) {
   const id = path.basename(runDir), match = /^(\d{4}-\d{2}-\d{2})-(\d+)/.exec(id);
   const context = {
     path, stateDir, runDir, inspectPreviousRun, json, save, createHash,
@@ -138,7 +139,8 @@ async function runEarlyMain({ stateDir, runDir, json, save, auditBlocked = false
     auditProblems: () => auditBlocked ? ['billing evidence expired'] : [],
     note: async () => 1, userInfo: () => ({ username: 'bot' }),
     console: { log() {}, error() {} }, process: { exitCode: 0 },
-    git: () => assert.fail('Halt or audit block must stop before git fetch'),
+    jstDate: () => match[1], reserve: () => {}, runId: id,
+    git: () => allowInfrastructurePass ? '' : assert.fail('Halt or audit block must stop before git fetch'),
   };
   const execute = new AsyncFunction(...Object.keys(context), `try { ${earlyMain} } catch (error) { ${actualOuterCatch} }`);
   await execute(...Object.values(context));
@@ -168,6 +170,23 @@ test('actual main audit block preserves approval without a task across repeated 
   }
 }));
 
+test('actual halt-only stops remain infrastructure failures then clear after current gates pass without code repair', async () => scenario(async ({ stateDir, add, launch, json, save }) => {
+  await save(path.join(stateDir, 'halt.json'), { reason: 'Production investigation required' });
+  for (const id of ['2026-10-25-5', '2026-10-25-13']) {
+    const runDir = await add(id);
+    await runEarlyMain({ stateDir, runDir, json, save });
+    assert.equal((await json(path.join(runDir, 'result.json'))).gate, 'infrastructure');
+    assert.equal((await json(path.join(runDir, 'infrastructure-gates.json'))).passed, false);
+    assert.equal(await json(path.join(runDir, 'task.json'), null), null);
+  }
+  await rm(path.join(stateDir, 'halt.json'));
+  const finalDir = await add('2026-10-25-21');
+  await runEarlyMain({ stateDir, runDir: finalDir, json, save, allowInfrastructurePass: true });
+  assert.equal((await json(path.join(finalDir, 'infrastructure-gates.json'))).passed, true);
+  await launch(finalDir, () => assert.fail('Infrastructure clearance must not invent implementation repair'), () => assert.fail('No release task exists'));
+  assert.equal((await json(path.join(finalDir, 'startup-recovery.json'))).proof.type, 'current-infrastructure-gates');
+}));
+
 test('actual development approval return checkpoints explicit approval stage and risk', async () => {
   const checkpointStart = source.lastIndexOf("    await recordTask({ stage: 'awaiting-approval'");
   const returnMarker = "    return { status: 'awaiting-approval', pr, sha };";
@@ -180,3 +199,51 @@ test('actual development approval return checkpoints explicit approval stage and
   assert.equal(checkpoints[0].stage, 'awaiting-approval');
   assert.equal(checkpoints[0].verdict.risk, 'approval-required');
 });
+
+test('actual startup retains unknown workflow over three launches without entering code repair', async () => scenario(async ({ add, launch, json }) => {
+  const task = { kind: 'normal', branch: 'auto/normal-original', stage: 'validation-uncertain', sha: 'a'.repeat(40), attempt: 1 };
+  await add('2026-10-24-21', { status: 'failed', reason: 'dispatch outcome unknown' }, task);
+  for (const id of ['2026-10-25-5', '2026-10-25-13', '2026-10-25-21']) {
+    const runDir = await add(id);
+    await assert.rejects(launch(runDir, () => assert.fail('Uncertain workflow must not call models')), /unresolved/);
+    assert.equal((await json(path.join(runDir, 'result.json'))).status, 'awaiting-verification');
+    assert.equal((await json(path.join(runDir, 'task.json'))).stage, 'validation-uncertain');
+  }
+}));
+
+test('actual startup reconciles the same pending workflow over three launches before candidate repair', async () => scenario(async ({ add, launch, json, save }) => {
+  const sha = 'a'.repeat(40);
+  const task = { kind: 'normal', branch: 'auto/normal-original', stage: 'validation-uncertain', sha, attempt: 1 };
+  const originalDir = await add('2026-10-24-21', { status: 'failed', reason: 'watch disconnected' }, task);
+  await save(path.join(originalDir, 'normal-after-1-ci.json'), { sha, run: 123, status: 'running' });
+  let repairs = 0;
+  for (const [index, id] of ['2026-10-25-5', '2026-10-25-13', '2026-10-25-21'].entries()) {
+    const runDir = await add(id);
+    const proc = { exitCode: 0 };
+    const overrides = { process: proc, gh: async args => {
+      assert.deepEqual(args.slice(0, 3), ['run', 'view', '123']);
+      return JSON.stringify({ databaseId: 123, displayTitle: `Verify Automation ${sha} original-request`, status: index < 2 ? 'in_progress' : 'completed', conclusion: index < 2 ? '' : 'success' });
+    } };
+    const repair = async (kind, { previous }) => {
+      repairs++;
+      assert.equal(previous.task.branch, task.branch);
+      assert.equal(previous.task.sha, sha);
+      assert.equal(previous.task.uncertaintyProof.run, 123);
+      return { status: 'released', sha, pr: 321, prevention: 'Regression checks original workflow identity', evidence: { ci: 'passed' } };
+    };
+    if (index < 2) {
+      await assert.rejects(launch(runDir, repair, undefined, [], overrides), error => { assert.equal(error.exitCode, 2); return /unresolved/.test(error.message); });
+      assert.equal((await json(path.join(runDir, 'result.json'))).status, 'awaiting-verification');
+      const retained = await json(path.join(runDir, 'task.json'));
+      assert.equal(retained.stage, 'validation-uncertain');
+      assert.equal(retained.uncertaintyDir, originalDir);
+      assert.equal(retained.uncertainWorkflow.run, 123);
+      assert.equal(repairs, 0);
+    } else {
+      const outcome = await launch(runDir, repair, undefined, [], overrides);
+      assert.equal(outcome.status, 'released');
+      assert.equal((await json(path.join(runDir, 'uncertainty-proof.json'))).run, 123);
+      assert.equal(repairs, 1);
+    }
+  }
+}));

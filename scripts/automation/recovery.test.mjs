@@ -15,7 +15,7 @@ const end = source.indexOf('async function adopt(exp) {');
 assert.ok(start >= 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1 } = {}) {
+async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1, afterCiStatus, pushFailures = 0, pushRemoteOutcome = 'unchanged', runMinutes = 90 } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'retro-recovery-'));
   const calls = [];
   let elapsedMs = 0;
@@ -34,7 +34,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     if (!missingEvidence) await writeFile(path.join(dir, proof), png);
     await mkdir(path.join(dir, 'docs'));
     await writeFile(path.join(dir, 'docs/repair.md'), badEncoding ? Buffer.from([0xff]) : 'repair');
-    let implementations = 0, commits = 0, reviewNumber = 0, rebaseAttempted = false, liveCalls = 0;
+    let implementations = 0, commits = 0, reviewNumber = 0, rebaseAttempted = false, liveCalls = 0, pushAttempts = 0;
     const result = { title: 'repair', summary: 'researched safe change', noChange: implementNoChange, sources: ['https://example.com'], screenshots: [proof], prevention: 'Add a regression scenario', risk: 'reversible', assumption: 'test', successCriteria: 'test' };
     const plan = { ...result };
     delete plan.noChange;
@@ -42,7 +42,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
       path, createHash, requireReview, generationBudget, TASK_TIMING, Date: elapsedClock ? ClockDate : Date,
       collectEvidence: async options => { advance(TASK_TIMING.artifactMs); return collectEvidence(options); }, safeEnv: extra => extra,
       prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, runDir, runId: 'fixture', stateDir: dir,
-      deadline: clockStart + 90 * 60_000, now: new Date(),
+      deadline: clockStart + runMinutes * 60_000, now: new Date(),
       config: { repositoryPath: dir }, policy: { repository: 'test/repo', protectedPaths: [], productDirection: {}, liveAiVerification: { enabled: resumeLiveFailure } },
       workspace: async () => dir, withWorkspace: async (dir, callback) => callback({}),
       readFile, writeFile, readdir, cp, lstat,
@@ -56,6 +56,10 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
           await writeFile(path.join(runDir, 'resumed-release-checks.log'), 'actual resumed test failure');
           throw new Error('resumed workflow failed');
         }
+        if (tag.includes('-after-') && afterCiStatus) {
+          await writeFile(path.join(runDir, `${tag}-ci.json`), JSON.stringify({ status: afterCiStatus }));
+          throw new Error('candidate workflow outcome unavailable');
+        }
         if (tag.endsWith('-before') && baseline !== 'passed') {
           await writeFile(path.join(runDir, `${tag}-ci.json`), JSON.stringify({ status: baseline }));
           await writeFile(path.join(runDir, `${tag}-checks.log`), 'test failure: pending-state assertion');
@@ -64,6 +68,15 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
       },
       git: async args => {
         if (resume && (args[0] === 'rebase' || args[0] === 'push')) calls.push(['git', args]);
+        if (args[0] === 'ls-remote') {
+          const observed = pushAttempts && pushRemoteOutcome === 'acknowledged' ? commits.toString(16).padStart(40, '0') : pushAttempts && pushRemoteOutcome === 'changed' ? 'f'.repeat(40) : '0'.repeat(40);
+          return `${observed}\trefs/heads/test`;
+        }
+        if (args[0] === 'push' && pushFailures) {
+          calls.push(['push']);
+          if (++pushAttempts <= pushFailures) throw new Error('push transport disconnected');
+        }
+
         if (rebaseConflict && args[0] === 'rebase' && args[1] === 'origin/main' && !rebaseAttempted) { rebaseAttempted = true; throw new Error('conflict in original feature'); }
         if (localRecoveryCheckpoint && args[0] === 'rebase' && args[1] === 'origin/main') commits++;
         if (args[0] === 'commit') commits++;
@@ -105,7 +118,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
         return 'https://github.com/test/repo/pull/1';
       },
       jstDate: () => '2026-10-26', changedPathsBlocked: () => [], needsLiveAiVerification: () => resumeLiveFailure,
-      release: async () => { calls.push(['release']); advance(4 * 60_000); return !elapsedClock || clockStart + 90 * 60_000 - ClockDate.now() >= TASK_TIMING.releaseMs; },
+      release: async () => { calls.push(['release']); advance(4 * 60_000); return !elapsedClock || clockStart + runMinutes * 60_000 - ClockDate.now() >= TASK_TIMING.releaseMs; },
     };
     const resumeDeclaration = source.slice(source.indexOf('async function resumePendingRelease('), source.indexOf('async function prepareRecovery('));
     const prior = { id: 'old-run', dir: runDir, reason: 'Previous release incomplete', task: { kind: 'normal', sha: '0'.repeat(40), branch: localRecoveryCheckpoint ? 'auto/normal-local-recovery' : 'auto/normal-original', ...(localRecoveryCheckpoint ? { remoteBranch: 'auto/normal-original', remoteHeadSha: '0'.repeat(40) } : {}), pr: 123, issue: 456, result, stage: 'awaiting-release' } };
@@ -128,6 +141,21 @@ test('resumed release fixes two reviews and merges the original PR within three 
   const prWrites = run.calls.filter(call => call[0] === 'gh' && ['create', 'edit'].includes(call[1][1]));
   assert.deepEqual(prWrites.map(call => call[1].slice(0, 3)), [['pr', 'edit', '123']]);
   assert.ok(run.calls.some(call => call[0] === 'git' && call[1][0] === 'push' && call[1].at(-1) === 'HEAD:auto/normal-original'));
+});
+
+test('existing PR with 40 minutes remaining fixes a resumed review and validates now while release waits', async () => {
+  const run = await runScenario({ resume: true, elapsedClock: true, runMinutes: 40, reviewChoices: ['revise', 'approve'] });
+  assert.equal(run.error, undefined);
+  assert.equal(run.result.status, 'awaiting-release-conditions');
+  assert.equal(run.result.pr, 123);
+  assert.equal(run.calls.filter(call => call[0] === 'implement').length, 1);
+  assert.equal(run.calls.filter(call => call[0] === 'review').length, 2);
+  assert.equal(run.calls.filter(call => call[0] === 'checks').length, 2);
+  assert.equal(run.calls.filter(call => call[0] === 'release').length, 1);
+  assert.ok(run.elapsedMs < 40 * 60_000);
+  assert.equal(run.checkpoint.pr, 123);
+  assert.equal(run.checkpoint.stage, 'awaiting-release-conditions');
+  assert.equal(run.calls.some(call => call[0] === 'gh' && call[1][1] === 'create'), false);
 });
 
 test('resumed rebase conflict is aborted and candidate transfers onto current main before same PR repair', async () => {
@@ -279,3 +307,30 @@ test('previous recovery cannot exit through no-change or omit regression coverag
   assert.equal(untested.calls.filter(call => call[0] === 'implement').length, 3);
   assert.equal(untested.calls.some(call => call[0] === 'release'), false);
 });
+
+for (const status of ['interrupted', 'unknown', 'dispatched']) {
+  test(`uncertain candidate CI ${status} preserves work without generating or redispatching`, async () => {
+    const run = await runScenario({ afterCiStatus: status });
+    assert.match(run.error.message, /Infrastructure outcome uncertain/);
+    assert.equal(run.calls.filter(call => call[0] === 'implement').length, 1);
+    assert.equal(run.calls.filter(call => call[0] === 'checks' && call[1].includes('-after-')).length, 1);
+    assert.equal(run.calls.some(call => call[0] === 'release'), false);
+  });
+}
+for (const [outcome, failures, expectedPushes, succeeds] of [
+  ['acknowledged', 1, 1, true], ['unchanged', 1, 2, true], ['unchanged', 2, 2, false], ['changed', 1, 1, false],
+]) {
+  test(`push ${outcome} with ${failures} transport failures reconciles without code regeneration`, async () => {
+    const run = await runScenario({ pushFailures: failures, pushRemoteOutcome: outcome });
+    assert.equal(run.calls.filter(call => call[0] === 'push').length, expectedPushes);
+    assert.equal(run.calls.filter(call => call[0] === 'implement').length, 1);
+    if (succeeds) {
+      assert.equal(run.error, undefined);
+      assert.equal(run.result.status, 'released');
+    } else {
+      assert.match(run.error.message, /Infrastructure outcome uncertain/);
+      assert.equal(run.calls.some(call => call[0] === 'release'), false);
+      assert.equal(run.calls.some(call => call[0] === 'checks' && call[1].includes('-after-')), false);
+    }
+  });
+}

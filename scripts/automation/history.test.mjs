@@ -141,6 +141,22 @@ test('passing preflight cannot erase unfinished task carried through a developme
   assert.equal(repairs, 1);
   assert.deepEqual(records.map(entry => entry.status), ['repairing', 'resolved']);
 });
+test('passed current infrastructure gates resolve a prior infrastructure-only stop without invented code repair', async () => {
+  const records = [];
+  await reconcileStartup({ previous: { ...failedPrevious, result: { status: 'failed', gate: 'infrastructure' } }, repair: () => assert.fail('Infrastructure gate clearance is not a code repair'), record: async value => records.push(value), infrastructureGatesPassed: true });
+  assert.equal(records[0].status, 'resolved');
+  assert.equal(records[0].proof.type, 'current-infrastructure-gates');
+});
+test('infrastructure clearance never exempts unfinished tasks or owner approval', async () => {
+  const prior = { ...failedPrevious, result: { status: 'failed', gate: 'infrastructure' }, task: { kind: 'normal', branch: 'auto/normal-original' } };
+  let repairs = 0;
+  await reconcileStartup({ previous: prior, repair: async () => { repairs++; return { status: 'released', prevention: 'Same unfinished work validated' }; }, record: async () => {}, infrastructureGatesPassed: true });
+  assert.equal(repairs, 1);
+  await assert.rejects(reconcileStartup({ previous: { ...prior, task: undefined, ownerBlocked: true }, repair: () => assert.fail('Owner boundary bypassed'), record: async () => {}, infrastructureGatesPassed: true }), /owner approval/);
+});
+test('infrastructure resolution needs explicit passing gate proof', async () => {
+  await assert.rejects(reconcileStartup({ previous: { ...failedPrevious, result: { status: 'failed', gate: 'infrastructure' } }, repair: async () => ({ status: 'failed' }), record: async () => {} }), /unresolved/);
+});
 test('repair exception is recorded unresolved and preserved', async () => {
   const records = [], failure = new Error('repair verification failed');
   await assert.rejects(reconcileStartup({ previous: failedPrevious, repair: async () => { throw failure; }, record: async entry => records.push(entry) }), error => error === failure);

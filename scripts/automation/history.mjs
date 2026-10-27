@@ -82,7 +82,7 @@ export async function inspectPreviousRun({ runsDir, currentRunDir }) {
 }
 
 /** Interim startup backstop: current work cannot begin until repair and prevention have proof. */
-export async function reconcileStartup({ previous, repair, record, prerequisitesPassed = true }) {
+export async function reconcileStartup({ previous, repair, record, prerequisitesPassed = true, infrastructureGatesPassed = false }) {
   if (typeof record !== 'function') throw new Error('Startup reconciliation requires a durable record callback');
   const identity = previous ? { previousId: previous.id, previousDir: previous.dir } : {};
   if (!previous || !previous.needsRecovery) {
@@ -95,6 +95,10 @@ export async function reconcileStartup({ previous, repair, record, prerequisites
   }
   if (previous.result?.status === 'blocked' && previous.result.stage === 'development' && !previous.task && prerequisitesPassed === true) {
     await record({ status: 'resolved', ...identity, prevention: 'Development prerequisites are checked before every execution.', proof: { type: 'current-preflight', prerequisitesPassed: true }, reason: 'Current execution passed the development prerequisites that blocked the previous execution.' });
+    return null;
+  }
+  if (previous.result?.gate === 'infrastructure' && !previous.task && infrastructureGatesPassed === true) {
+    await record({ status: 'resolved', ...identity, prevention: 'All infrastructure safety gates are checked before each execution and gate failures retain their classification.', proof: { type: 'current-infrastructure-gates', infrastructureGatesPassed: true }, reason: 'Current authentication, repository rules, incident, release lease, halt, budget and fetch gates passed; the preceding stop had no unfinished implementation task.' });
     return null;
   }
   await record({ status: 'repairing', ...identity, reason: previous.reason });
