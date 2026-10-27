@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid } from './candidate.mjs';
 const diff = (text, file = 'e2e/chat.spec.ts') => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +12,1 @@\n+${text}\n`;
 
@@ -25,6 +27,26 @@ test('literal loopback assertion allowed while calls, external URLs and credenti
 test('test disabling and deleted coverage remain blocked', () => {
   assert.ok(validateCandidateDiff(diff('test.skip("failure", () => {})')).length);
   assert.ok(validateCandidateDiff('+++ b/e2e/chat.spec.ts\n@@ -1 +1 @@\n-expect(value).toBe(true)\n+expect(value).toBe(false)').length);
+});
+
+test('actual git diffs cannot spoof a docs header from inside a source hunk or skip plus-prefixed code', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'retro-diff-header-'));
+  const execute = promisify(execFile);
+  try {
+    await execute('git', ['init'], { cwd: root });
+    await mkdir(path.join(root, 'src'));
+    await writeFile(path.join(root, 'src/spoof.ts'), '/*\n++ b/docs/innocent.md\n*/\nconst secret = process.env.TOKEN;\n');
+    await writeFile(path.join(root, 'src/increment.ts'), '++process.env.COUNT;\n');
+    await execute('git', ['add', '.'], { cwd: root });
+    const { stdout } = await execute('git', ['diff', '--cached', '--no-ext-diff'], { cwd: root, encoding: 'utf8' });
+    assert.match(stdout, /^\+\+\+ b\/docs\/innocent\.md$/m);
+    assert.match(stdout, /^\+\+\+process\.env\.COUNT;/m);
+    const findings = validateCandidateDiff(stdout).filter(item => item.reason === 'Runtime environment or credential access');
+    assert.deepEqual(findings.map(({ file, line }) => ({ file, line })), [
+      { file: 'src/increment.ts', line: 1 },
+      { file: 'src/spoof.ts', line: 4 }
+    ]);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('changed code and docs must be valid UTF-8 without replacement characters', async () => {

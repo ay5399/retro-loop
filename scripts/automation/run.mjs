@@ -179,7 +179,7 @@ async function main() {
     });
   } catch (error) {
     const recoveryState = await json(path.join(runDir, 'startup-recovery.json'), {});
-    const status = recoveryState.status === 'awaiting-approval' ? 'awaiting-approval' : recoveryState.outcome?.status === 'awaiting-release-conditions' ? 'awaiting-release-conditions' : 'failed';
+    const status = recoveryState.status === 'awaiting-approval' || recoveryState.outcome?.status === 'awaiting-approval' ? 'awaiting-approval' : recoveryState.outcome?.status === 'awaiting-release-conditions' ? 'awaiting-release-conditions' : 'failed';
     if (status !== 'failed') error.exitCode = 2;
     // Preserve an approval boundary through repeated launches; the outer catch must
     // not replace it with a generic failure or drop the original task identity.
@@ -386,7 +386,7 @@ async function prepareRecovery(previous, dir) {
   const source = path.join(stateDir, 'worktrees', branch.replaceAll('/', '-'));
   let plan = previous.task?.plan;
   if (!plan) {
-    const names = (await readdir(previous.dir)).filter(name => /^normal-plan-\d+\.json$/.test(name));
+    const names = (await readdir(previous.dir)).filter(name => /^(?:normal|mutation)(?:-recovery)?-plan-\d+\.json$/.test(name));
     names.sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
     if (names.length) plan = (await json(path.join(previous.dir, names.at(-1)), {})).plan;
   }

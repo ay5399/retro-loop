@@ -42,12 +42,15 @@ export async function validateCandidateTextFiles(root, files) {
 
 export function validateCandidateDiff(diff) {
   const diagnostics = [];
-  let file = '(diff)', line = 0;
+  let file = '(diff)', line = 0, inHunk = false;
   for (const entry of diff.split('\n')) {
-    if (entry.startsWith('+++ b/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
+    if (entry.startsWith('diff --git ')) { inHunk = false; continue; }
+    // Added source text may itself start with ++/--. Only metadata outside a
+    // hunk can name a file or be skipped as a header.
+    if (!inHunk && entry.startsWith('+++ b/')) { file = entry.slice(6).replace(/\r$/, ''); continue; }
     const hunk = entry.match(/^@@ .* \+(\d+)/);
-    if (hunk) { line = Number(hunk[1]); continue; }
-    if (entry.startsWith('---') || entry.startsWith('+++')) continue;
+    if (hunk) { line = Number(hunk[1]); inHunk = true; continue; }
+    if (!inHunk) continue;
     if (entry.startsWith('-')) {
       if (file.startsWith('e2e/') && /expect\(|assert\.|test\(/.test(entry)) diagnostics.push(issue(file, line, 'Removing browser test coverage', 'Preserve existing assertions and repair the behavior or deterministic test synchronization.'));
       continue;

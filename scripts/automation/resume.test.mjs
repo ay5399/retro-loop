@@ -83,6 +83,13 @@ test('recovery transfers committed, dirty, and untracked candidate files onto cu
   assert.equal((await readFile(path.join(fresh, 'scripts/controller.mjs'), 'utf8')).trim(), 'current controller');
 }));
 
+test('recovery finds the latest recovery-tagged plan when a task checkpoint lacks its plan', async () => fixture(async ({ fresh, prepareRecovery, previous }) => {
+  await writeFile(path.join(previous.dir, 'mutation-recovery-plan-1.json'), JSON.stringify({ plan: { title: 'old proposal' } }));
+  await writeFile(path.join(previous.dir, 'mutation-recovery-plan-2.json'), JSON.stringify({ plan: { title: 'latest reviewed proposal' } }));
+  const result = await prepareRecovery({ ...previous, task: { branch: previous.task.branch } }, fresh);
+  assert.equal(result.plan.title, 'latest reviewed proposal');
+}));
+
 test('recovery rejects unsafe branch and protected candidate changes before apply', async () => fixture(async ({ original, fresh, calls, prepareRecovery, previous }) => {
   const applied = () => calls.filter(call => call.args[0] === 'apply').length;
   await assert.rejects(prepareRecovery({ ...previous, task: { branch: '../outside' } }, fresh), /Unsafe previous task branch/);

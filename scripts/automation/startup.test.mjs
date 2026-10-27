@@ -51,6 +51,13 @@ test('actual main preserves owner boundary and task across three consecutive lau
   }
 }));
 
+test('repair requiring owner approval is reported as approval waiting on the same launch', async () => scenario(async ({ add, launch, json }) => {
+  await add('2026-10-25-5', { status: 'failed' }, { kind: 'normal', stage: 'implementation', branch: 'auto/normal-original' });
+  const runDir = await add('2026-10-25-13');
+  await assert.rejects(launch(runDir, async () => ({ status: 'awaiting-approval', stage: 'planning', reason: 'Owner decision required' })), /unresolved/);
+  assert.equal((await json(path.join(runDir, 'result.json'))).status, 'awaiting-approval');
+}));
+
 test('actual main carries failed repair checkpoint and retries the same branch on third launch', async () => scenario(async ({ add, launch, json, save }) => {
   const originalTask = { kind: 'normal', branch: 'automation/original', stage: 'implementation', sha: 'initial-sha', plan: { title: 'same improvement' } };
   await add('2026-10-25-5', { status: 'failed', reason: 'Verification assertion failed' }, originalTask);
