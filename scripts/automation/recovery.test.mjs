@@ -15,7 +15,7 @@ const end = source.indexOf('async function adopt(exp) {');
 assert.ok(start >= 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1, afterCiStatus, pushFailures = 0, pushRemoteOutcome = 'unchanged', runMinutes = 90 } = {}) {
+async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1, afterCiStatus, pushFailures = 0, pushRemoteOutcome = 'unchanged', runMinutes = 90, planningErrors = [], previousRecoveryPlan = false } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'retro-recovery-'));
   const calls = [];
   let elapsedMs = 0;
@@ -34,7 +34,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     if (!missingEvidence) await writeFile(path.join(dir, proof), png);
     await mkdir(path.join(dir, 'docs'));
     await writeFile(path.join(dir, 'docs/repair.md'), badEncoding ? Buffer.from([0xff]) : 'repair');
-    let implementations = 0, commits = 0, reviewNumber = 0, rebaseAttempted = false, liveCalls = 0, pushAttempts = 0;
+    let implementations = 0, commits = 0, reviewNumber = 0, rebaseAttempted = false, liveCalls = 0, pushAttempts = 0, planningCalls = 0;
     const result = { title: 'repair', summary: 'researched safe change', noChange: implementNoChange, sources: ['https://example.com'], screenshots: [proof], prevention: 'Add a regression scenario', risk: 'reversible', assumption: 'test', successCriteria: 'test' };
     const plan = { ...result };
     delete plan.noChange;
@@ -98,6 +98,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
         const planning = args[args.indexOf('--output-schema') + 1].endsWith('plan.schema.json');
         advance(options.timeout);
         calls.push([planning ? 'plan' : 'implement', options.input]);
+        if (planning && planningErrors[planningCalls++]) throw new Error(planningErrors[planningCalls - 1]);
         assert.equal(args[args.indexOf('--sandbox') + 1], planning ? 'read-only' : 'workspace-write');
         if (!planning) {
           implementations++;
@@ -122,9 +123,9 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     };
     const resumeDeclaration = source.slice(source.indexOf('async function resumePendingRelease('), source.indexOf('async function prepareRecovery('));
     const prior = { id: 'old-run', dir: runDir, reason: 'Previous release incomplete', task: { kind: 'normal', sha: '0'.repeat(40), branch: localRecoveryCheckpoint ? 'auto/normal-local-recovery' : 'auto/normal-original', ...(localRecoveryCheckpoint ? { remoteBranch: 'auto/normal-original', remoteHeadSha: '0'.repeat(40) } : {}), pr: 123, issue: 456, result, stage: 'awaiting-release' } };
-    const run = new AsyncFunction(...Object.keys(context), (resume ? resumeDeclaration : '') + source.slice(start, end) + (resume ? `\nreturn resumePendingRelease(${JSON.stringify(prior)});` : '\nreturn develop("normal", ' + JSON.stringify(previous ? { previous: { id: 'old-run', reason: 'previous evidence missing' } } : {}) + ');'));
+    const run = new AsyncFunction(...Object.keys(context), (resume ? resumeDeclaration : '') + source.slice(start, end) + (resume ? `\nreturn resumePendingRelease(${JSON.stringify(prior)});` : '\nreturn develop("normal", ' + JSON.stringify(previous ? { previous: { id: 'old-run', reason: 'previous evidence missing', ...(previousRecoveryPlan ? { task: { recovery: { plan: { title: 'original approved context' } } } } : {}) } } : {}) + ');'));
     try { const outcome = await run(...Object.values(context)); return { result: outcome, calls, elapsedMs, checkpoint: await context.json(path.join(runDir, 'task.json'), null) }; }
-    catch (error) { return { error, calls }; }
+    catch (error) { return { error, calls, checkpoint: await context.json(path.join(runDir, 'task.json'), null) }; }
   } finally {
     assert.ok(path.resolve(dir).startsWith(path.resolve(tmpdir()) + path.sep));
     await rm(dir, { recursive: true, force: true });
@@ -218,6 +219,33 @@ test('read-only plan with a useful candidate advances through review, implementa
   assert.equal(run.error, undefined);
   assert.equal(run.result.status, 'released');
   assert.deepEqual(run.calls.map(call => call[0]), ['checks', 'plan', 'review', 'implement', 'review', 'checks', 'release']);
+});
+
+test('planning timeout retries in the same run and still requires independent planning review', async () => {
+  const run = await runScenario({ elapsedClock: true, planningErrors: ['codex failed (timeout). See fixture log'] });
+  assert.equal(run.error, undefined);
+  assert.equal(run.result.status, 'released');
+  assert.equal(run.calls.filter(call => call[0] === 'plan').length, 2);
+  assert.equal(run.calls.filter(call => call[0] === 'review' && call[1] === 'plan').length, 1);
+  assert.ok(run.elapsedMs < 90 * 60_000);
+});
+
+test('planning retries stop after three explicit timeouts; authentication failures never retry', async () => {
+  const timed = await runScenario({ planningErrors: Array(3).fill('codex failed (timeout). See fixture log') });
+  assert.match(timed.error.message, /timed out after 3 attempts/);
+  assert.equal(timed.calls.filter(call => call[0] === 'plan').length, 3);
+  assert.equal(timed.calls.some(call => call[0] === 'review'), false);
+  const auth = await runScenario({ planningErrors: ['codex failed (1). Authentication required'] });
+  assert.match(auth.error.message, /Authentication required/);
+  assert.equal(auth.calls.filter(call => call[0] === 'plan').length, 1);
+  const retained = await runScenario({ previous: true, previousRecoveryPlan: true, planningErrors: Array(3).fill('codex failed (timeout). See fixture log') });
+  assert.equal(retained.checkpoint.plan.title, 'original approved context');
+});
+
+test('baseline interruption preserves the nested previous recovery plan checkpoint', async () => {
+  const run = await runScenario({ previous: true, previousRecoveryPlan: true, baseline: 'interrupted' });
+  assert.match(run.error.message, /baseline failed/);
+  assert.equal(run.checkpoint.plan.title, 'original approved context');
 });
 
 test('elapsed real develop repairs two missing-evidence attempts and completes third review/CI before retaining the same unmerged PR', async () => {

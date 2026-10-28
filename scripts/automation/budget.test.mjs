@@ -9,7 +9,7 @@ test('shared actual review/live/release limits and generation caps fit a 90 minu
   assert.equal(TASK_TIMING.liveAiMs, 7 * minute);
   assert.equal(TASK_TIMING.releaseMs, 45 * minute);
   assert.equal(taskAdmissionBudget({ deadline: 90 * minute, now: 0, mode: 'normal' }).admitted, true);
-  for (const [stage, timeoutMs] of [['planning', 120_000], ['implementation', 360_000], ['fix', 240_000]]) assert.deepEqual(generationBudget({ deadline: 90 * minute, now: 3 * minute, stage }), { timeoutMs });
+  for (const [stage, timeoutMs] of [['planning', 360_000], ['implementation', 360_000], ['fix', 240_000]]) assert.deepEqual(generationBudget({ deadline: 90 * minute, now: 3 * minute, stage }), { timeoutMs });
 });
 
 test('generation leaves enough for actual review/live AI/both CI/artifacts/publication and release gate', () => {
@@ -38,10 +38,10 @@ test('longer measured CI and review are reserved; shorter estimates cannot weake
 
 test('mutation admission includes baseline, all three plan reviews, implementation and two verification workflows', () => {
   const admission = taskAdmissionBudget({ deadline: 90 * minute, now: 0, mode: 'mutation' });
-  assert.equal(admission.requiredMs, 50 * minute);
+  assert.equal(admission.requiredMs, 62 * minute);
   assert.equal(admission.admitted, true);
-  assert.equal(taskAdmissionBudget({ deadline: 50 * minute, now: 0, mode: 'mutation' }).admitted, true);
-  assert.equal(taskAdmissionBudget({ deadline: 49 * minute, now: 0, mode: 'mutation' }).admitted, false);
+  assert.equal(taskAdmissionBudget({ deadline: 62 * minute, now: 0, mode: 'mutation' }).admitted, true);
+  assert.equal(taskAdmissionBudget({ deadline: 61 * minute, now: 0, mode: 'mutation' }).admitted, false);
   // The former 15 minute admission omitted baseline and repeated plan review entirely.
   assert.equal(taskAdmissionBudget({ deadline: 15 * minute, now: 0, mode: 'mutation' }).admitted, false);
   assert.deepEqual(generationBudget({ deadline: 25 * minute, now: 0, mode: 'mutation', stage: 'implementation' }), { timeoutMs: 300_000 });

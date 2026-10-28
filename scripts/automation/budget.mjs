@@ -1,5 +1,5 @@
 export const TASK_TIMING = Object.freeze({ reviewMs: 300_000, liveAiMs: 420_000, releaseMs: 45 * 60_000, minCiMs: 180_000, artifactMs: 60_000, publishMs: 60_000, minGenerationMs: 30_000 });
-const caps = { planning: 120_000, implementation: 360_000, fix: 240_000 };
+const caps = { planning: 360_000, implementation: 360_000, fix: 240_000 };
 
 function durations({ deadline, now = Date.now(), mode = 'normal', ciMs = TASK_TIMING.minCiMs, releaseMs = TASK_TIMING.releaseMs, reviewMs = TASK_TIMING.reviewMs, liveAiMs = TASK_TIMING.liveAiMs }) {
   if (!['normal', 'mutation'].includes(mode)) throw new Error(`Unknown generation mode: ${mode}`);

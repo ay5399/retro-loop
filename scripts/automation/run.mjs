@@ -470,7 +470,7 @@ async function prepareRecovery(previous, dir) {
   const branch = previous.task?.branch ?? `auto/normal-${previous.id}`;
   if (!/^auto\/(?:normal|mutation)-[a-z0-9-]+$/i.test(branch)) throw new Error('Unsafe previous task branch');
   const source = path.join(stateDir, 'worktrees', branch.replaceAll('/', '-'));
-  let plan = previous.task?.plan;
+  let plan = previous.task?.plan ?? previous.task?.recovery?.plan;
   if (!plan) {
     const names = (await readdir(previous.dir)).filter(name => /^(?:normal|mutation)(?:-recovery)?-plan-\d+\.json$/.test(name));
     names.sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
@@ -511,7 +511,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
   const branch = `auto/${kind}-${runId}${previous ? '-recovery' : ''}`;
   const dir = await workspace(branch);
   return withWorkspace(dir, async env => {
-    let checkpoint = { ...(existingRelease?.task ?? {}), kind, branch, remoteBranch: existingRelease?.task.remoteBranch ?? existingRelease?.task.branch, previousRun: previous?.id, stage: 'baseline', startedAt: now.toISOString() };
+    let checkpoint = { ...(existingRelease?.task ?? {}), plan: previous?.task?.plan ?? previous?.task?.recovery?.plan ?? existingRelease?.task.plan, recovery: previous?.task?.recovery, kind, branch, remoteBranch: existingRelease?.task.remoteBranch ?? existingRelease?.task.branch, previousRun: previous?.id, stage: 'baseline', startedAt: now.toISOString() };
     let remoteHeadSha = existingRelease?.task.remoteHeadSha ?? existingRelease?.task.sha;
     const recordTask = async update => {
       checkpoint = { ...checkpoint, ...update };
@@ -561,7 +561,22 @@ async function develop(kind, { previous, existingRelease } = {}) {
     let feedback = '';
     for (let attempt = 1; !existingRelease && attempt <= 3; attempt++) {
       const before = await git(['status', '--porcelain', '--untracked-files=all'], dir);
+      try {
       plan = await generate(`${baseInstruction}\nPLANNING ONLY: do not edit any files, implement, or run commands that mutate the workspace. Return the researched plan using the plan schema. decision=implement means a safe useful improvement or baseline repair is planned; planning being read-only is NEVER a reason for decision=no-change. Choose no-change only if no safe useful candidate exists after investigation. screenshots are proposed paths, not existing evidence. Previous independent planning feedback: ${feedback}`, `plan-${attempt}`);
+      } catch (error) {
+        // Only the controller's explicit generation timeout can be retried.
+        // Authentication, owner decisions, and other failures retain their boundary.
+        if (!/^codex failed \(timeout\)\./.test(error.message)) throw error;
+        if (await readFile(path.join(dir, '.git'), 'utf8') !== gitMetadata) throw new Error('Worktree Git metadata changed during timed-out planning');
+        const { unlink } = await import('node:fs/promises');
+        await unlink(output).catch(unlinkError => { if (unlinkError.code !== 'ENOENT') throw unlinkError; });
+        if (await git(['status', '--porcelain', '--untracked-files=all'], dir) !== before) throw new Error('Timed-out planning modified workspace; refusing to retry');
+        await recordTask({ stage: 'planning-timeout', attempt, reason: error.message });
+        await save(path.join(runDir, `${taskTag}-plan-timeout-${attempt}.json`), { status: 'timeout', attempt, reason: error.message });
+        if (attempt === 3) throw new Error(`Planning generation timed out after 3 attempts: ${error.message}`);
+        feedback = 'The previous planning generation timed out. Continue from the recorded prior recovery context and finish a concise researched plan; do not repeat unnecessary repository exploration.';
+        continue;
+      }
       if (await git(['status', '--porcelain', '--untracked-files=all'], dir) !== before) throw new Error('Planning modified workspace; implementation requires an approved plan');
       if (!['implement', 'no-change'].includes(plan.decision)) throw new Error('Invalid planning decision');
       if (!plan.sources?.filter(url => /^https:\/\//.test(url)).length) throw new Error('Planning research sources missing');
