@@ -48,6 +48,19 @@ test('migration cannot bless changed cost, identity, service, authentication, or
   assert.throws(() => migrateAuditPolicyHashes({ ...policy, auditMaxAgeDays: 30 }, originalAudit()), /seven-day/);
 });
 
+test('explicit stage hashes shadow stale legacy metadata without accepting changed effective policy', () => {
+  const original = { ...originalAudit(), policyHash: 'obsolete unused fallback' };
+  const migrated = migrateAuditPolicyHashes(policy, original);
+  assert.equal(migrated.policyHash, policyHash(policy, 'release'));
+  assert.deepEqual(migrated.services, original.services);
+  assert.deepEqual(auditProblems(policy, migrated), []);
+  assert.throws(() => migrateAuditPolicyHashes({ ...policy, operatingLimitYen: 700 }, original), /fresh evidence/);
+  delete original.policyHashes.release;
+  assert.throws(() => migrateAuditPolicyHashes(policy, original), /fresh evidence/);
+  const forged = { ...originalAudit(), policyHashes: { release: 'forged' } };
+  assert.throws(() => migrateAuditPolicyHashes(policy, forged), /fresh evidence/);
+});
+
 test('new audit stays sensitive to actual settings while scheduling/product text do not invalidate it', () => {
   const migrated = migrateAuditPolicyHashes(policy, originalAudit());
   assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'reworded' } }, migrated), []);

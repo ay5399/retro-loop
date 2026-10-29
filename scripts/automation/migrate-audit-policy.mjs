@@ -22,10 +22,17 @@ export function migrateAuditPolicyHashes(policy, audit) {
     if (stored !== current && stored !== previousPolicyHash(policy, stage)) throw new Error(`${stage}: policy settings differ from the previously audited policy; fresh evidence is required`);
     return current;
   };
-  if (Object.hasOwn(audit, 'policyHash')) migrated.policyHash = migrate(audit.policyHash, 'release');
   for (const [stage, hash] of Object.entries(audit.policyHashes ?? {})) {
     if (!['development', 'release'].includes(stage)) throw new Error('Unknown stored audit stage');
     migrated.policyHashes[stage] = migrate(hash, stage);
+  }
+  if (Object.hasOwn(audit, 'policyHash')) {
+    // A stage-specific release hash already shadows this legacy fallback in
+    // auditProblems. Validate that effective hash first, then normalize the
+    // inert fallback; never require obsolete, unused metadata to authorize it.
+    migrated.policyHash = audit.policyHashes?.release != null
+      ? migrated.policyHashes.release
+      : migrate(audit.policyHash, 'release');
   }
   if (!hashes) throw new Error('No previously verified policy hash to migrate');
   return migrated;
