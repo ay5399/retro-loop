@@ -2,11 +2,11 @@
 
 import { useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, generateId, type UIMessageChunk } from "ai";
+import { DefaultChatTransport, generateId, type UIMessage, type UIMessageChunk } from "ai";
 
 // A clean EOF is not necessarily a completed response. Require the protocol's
 // finish event, including when it omits the optional finishReason.
-class CompleteChatTransport extends DefaultChatTransport {
+class CompleteChatTransport extends DefaultChatTransport<UIMessage> {
   protected processResponseStream(stream: ReadableStream<Uint8Array<ArrayBufferLike>>) {
     let finished = false;
     return super.processResponseStream(stream).pipeThrough(

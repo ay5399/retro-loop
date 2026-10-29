@@ -88,6 +88,10 @@ test("単回送信で待機状態から正常完了へ戻る（固定モック�
     expect(payload.teamId).toBe(teamId);
     expect(payload.retroId).toBe(retroId);
     expect(payload.messages).toHaveLength(1);
+    expect(payload.messages[0].role).toBe("user");
+    expect(payload.messages[0].id).toEqual(expect.any(String));
+    expect(payload.messages[0].id.length).toBeGreaterThan(0);
+    expect(payload.messages[0].parts).toEqual([{ type: "text", text: "自分のレビュー待ちについて相談したいです" }]);
     await expect(send).toBeDisabled();
     await expect(send).toHaveText("応答中…");
     await expect(input).toBeDisabled();
