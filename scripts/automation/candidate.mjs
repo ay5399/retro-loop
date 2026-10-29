@@ -77,7 +77,11 @@ export function validateCandidateDiff(diff) {
     if (hunk) { line = Number(hunk[1]); inHunk = true; continue; }
     if (!inHunk) continue;
     if (entry.startsWith('-')) {
-      if (file.startsWith('e2e/') && /expect\(|assert\.|test\(/.test(entry)) diagnostics.push(issue(file, line, 'Removing browser test coverage', 'Preserve existing assertions and repair the behavior or deterministic test synchronization.'));
+      if (file.startsWith('e2e/') && /expect\(|assert\.|test\(/.test(entry)) {
+        const removed = entry.slice(1);
+        const excerpt = removed.length > 240 ? `${removed.slice(0, 239)}?` : removed;
+        diagnostics.push(issue(file, line, 'Removing browser test coverage', `Removed original line: ${JSON.stringify(excerpt)}. Moves and reindentation are also rejected, even when an equivalent assertion is added elsewhere. Restore the original existing test body unchanged; add separate regression tests and repair the behavior or deterministic test synchronization.`));
+      }
       continue;
     }
     if (!entry.startsWith('+')) { if (entry.startsWith(' ')) line++; continue; }
