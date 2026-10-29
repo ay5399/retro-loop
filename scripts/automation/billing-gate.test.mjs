@@ -48,5 +48,24 @@ test('release audit registration publishes only the verified policy hash and pre
     const saved = JSON.parse(await readFile(path.join(dir, 'audit.json'), 'utf8'));
     assert.deepEqual(saved.services, audit.services);
     assert.equal(saved.policyHashes.release, policyHash(policy, 'release'));
+    // The same unchanged evidence can be registered again, but registration
+    // cannot turn an old or different policy hash into current authorization.
+    await writeFile(path.join(dir, 'input.json'), JSON.stringify(saved));
+    await exec(process.execPath, [register, path.join(dir, 'input.json')], { cwd: dir, env: { ...process.env, RETRO_AUTOMATION_HOME: dir } });
+    for (const hashes of [
+      { policyHash: 'b'.repeat(64) },
+      { policyHashes: { release: 'b'.repeat(64) } },
+      { policyHashes: { development: 'b'.repeat(64) } },
+      { policyHashes: { invalid: policyHash(policy) } },
+      { policyHashes: { release: policyHash({ ...policy, operatingLimitYen: 700 }) } },
+    ]) {
+      await rm(path.join(dir, 'published.json'));
+      await writeFile(path.join(dir, 'input.json'), JSON.stringify({ ...audit, ...hashes }));
+      await assert.rejects(exec(process.execPath, [register, path.join(dir, 'input.json')], { cwd: dir, env: { ...process.env, RETRO_AUTOMATION_HOME: dir } }), /Stored billing policy differs/);
+      await assert.rejects(readFile(path.join(dir, 'published.json')), { code: 'ENOENT' });
+      assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'audit.json'), 'utf8')), saved);
+      // Restore only the test sentinel, not authorization or audit state.
+      await writeFile(path.join(dir, 'published.json'), 'test sentinel');
+    }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

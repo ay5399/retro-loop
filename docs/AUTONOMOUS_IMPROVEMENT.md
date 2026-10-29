@@ -133,7 +133,7 @@ VercelのSpend Managementは停止までに遅延があり、保存領域・追�
 1. 各サービスのBilling/Usage画面を所有者が確認し、非公開の証跡（日時、プラン、超過時の停止設定、対象プロジェクト）を用意する。カード番号・APIキーは記録しない。
 2. `%LOCALAPPDATA%/RetroLoopAutomation/audit.json` のコピーに結果を入力する。各サービスの `mode` は `included-hard-stop`、`free-hard-stop`、`disabled` のいずれか。必須サービス codex/claude/github/vercel/neon はdisabled不可。gemini/resend/devlakeはこの自動化から呼び出さなければdisabledでよい。
 3. 各項目に `verifiedAt`（ISO日時）と `evidence`（証跡の非公開保存先または確認した設定の説明）を入れる。`autoRechargeDisabled`、`productionLiveCallsDisabled`、`rollbackLiveCallsDisabled`、`vercelGitDeploymentsDisabled` は実際に確認した場合のみtrueにする。ゲート導入前の旧デプロイへ戻っても課金APIを呼べないよう、初回は本番側キーの無効化／削除まで確認する。
-4. 次のコマンドで検証・登録する。ローカル監査の更新とGitHubの本番配信用ポリシーハッシュの設定を行う。
+4. 次のコマンドで検証・登録する。ローカル監査の更新とGitHubの本番配信用ポリシーハッシュの設定を行う。保存済みハッシュが現在の設定と異なる入力は拒否する。形式だけの変更には専用の移行コマンドを使う。実際の設定変更を所有者が再確認した場合のみ、新しい証跡の入力から旧 `policyHash` / `policyHashes` を除いて新規登録する。
 
 ```powershell
 $env:RETRO_AUTOMATION_HOME = "$env:LOCALAPPDATA/RetroLoopAutomation"
