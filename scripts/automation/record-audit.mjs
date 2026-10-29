@@ -15,9 +15,8 @@ const errors = auditProblems(policy, audit, new Date(), stage);
 if (errors.length) throw new Error(errors.join('\n'));
 const installation = JSON.parse(await readFile(path.join(home, 'installation.json'), 'utf8'));
 if (stage === 'release') {
-const expiry = new Date(Math.min(...policy.services.filter(name => audit.services[name].mode !== 'disabled').map(name => Date.parse(audit.services[name].verifiedAt))) + policy.auditMaxAgeDays * 86400000).toISOString();
-const publish = spawnSync(installation.commands.gh.file, ['variable', 'set', 'AUTOMATION_BILLING_VERIFIED_UNTIL', '--repo', policy.repository, '--body', expiry], { windowsHide: true, encoding: 'utf8' });
-if (publish.status !== 0) throw new Error(`Unable to publish audit expiry: ${publish.stderr}`);
+const publish = spawnSync(installation.commands.gh.file, ['variable', 'set', 'AUTOMATION_BILLING_POLICY_HASH', '--repo', policy.repository, '--body', audit.policyHashes.release], { windowsHide: true, encoding: 'utf8' });
+if (publish.status !== 0) throw new Error(`Unable to publish owner-verified billing policy hash: ${publish.stderr}`);
 }
 await writeFile(path.join(home, 'audit.json'), JSON.stringify(audit, null, 2) + '\n');
-console.log(`${stage} audit recorded. Active services expire after ${policy.auditMaxAgeDays} days. Development audit does not authorize production releases.`);
+console.log(`${stage} audit recorded for the verified cost/security policy. Evidence and verification dates are preserved; elapsed days do not invalidate it. Development audit does not authorize production releases.`);

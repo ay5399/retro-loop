@@ -1,5 +1,20 @@
 # 自律改善の運用と費用監査
 
+## 2026-10-29: 費用監査は設定変更時に再確認する
+
+所有者の指示により7日間の経過だけで監査を失効させる運用を廃止した。確認済みの契約・追加課金停止設定の証跡と元の `verifiedAt` を保持し、確認したことにして日時を更新しない。費用・セキュリティに関わるポリシーのハッシュが一致する間は、経過日数だけを理由に停止しない。
+
+外部サービス側の契約、支払方法、自動購入、追加利用、予算・停止設定の変更はローカルハッシュだけでは自動検知できない。変更前に所有者が本番変数 `AUTOMATION_BILLING_POLICY_HASH` と該当段階のローカル `policyHashes` 登録を解除して実行を止め、設定変更後に再確認した証跡を登録する。元の証跡は削除しない。未確認のサービスを無料とみなす変更ではない。独立レビュー、CI、本番安全条件、金額上限と追加課金の禁止も維持する。
+
+本番workflowは `AUTOMATION_BILLING_POLICY_HASH` と、配信対象の正確なSHAから計算したrelease用 `policyHash` の一致を検証する。値が未登録・形式不正・不一致なら停止する。旧 `AUTOMATION_BILLING_VERIFIED_UNTIL` は参照せず、遠い将来の期限を登録する移行は行わない。旧監査は専用の明示移行処理で現在の費用設定と旧ハッシュの厳密な一致を確認してから移行し、確認日時・証跡を据え置く。通常の監査判定では旧ハッシュを恒久的に受け入れない。
+
+旧監査を退避してから次を実行する。移行先は元ファイルと異なる未作成のパスを指定する。移行処理だけでは本番配信を許可せず、`record-audit.mjs` のrelease登録で新ハッシュを公開する。
+
+```powershell
+node scripts/automation/migrate-audit-policy.mjs --policy automation/policy.json --audit C:/private/audit-before.json --output C:/private/audit-migrated.json
+node scripts/automation/record-audit.mjs C:/private/audit-migrated.json
+```
+
 ## 2026-10-28: 当回での解消を優先し、暫定的に前回結果を確認する
 
 原則として、発生した問題は同じ実行内で原因の修正・回帰テスト・独立レビュー・再検証まで進める。証跡画像の欠損、承認後の未実装、文字化けも例外扱いで即終了せず、初回＋修正2回の最大3回の対象に含める。費用、承認、本番の安全確認や90分上限を迂回しない。
@@ -46,11 +61,11 @@ Claudeが実装前に企画を独立レビューし、調査根拠・課題認�
 
 監査を二段階に分離した。実装・検証にはCodex、Claude、GitHubの費用確認と実行アカウントの隔離を要求する。本番のVercel・Neon、稼働中／復旧先の外部呼び出し停止は、マージ・配信する直前に確認する。本番監査だけが未完了なら、実装・独立レビュー・CIを進めてPRを未マージで残す。ただし候補ブランチのpushでも自動配信され得るため、Vercel Git自動配信の無効化は実装開始前にも必須。
 
-企画文や実行時刻の変更では監査を失効させない。費用・対象リポジトリ・保護範囲に関する設定の変更では失効する。旧形式の監査は初回のみ再登録が必要。使わないGemini・Resend・DevLakeは、呼び出し経路がないことを証跡付きで `disabled` と登録でき、この宣言には週次更新を求めない。実際に使うサービスの費用確認は引き続き7日で失効する。
+企画文や実行時刻の変更では監査を失効させない。費用・対象リポジトリ・保護範囲に関する設定の変更では失効する。旧形式の監査は初回のみ明示移行が必要。使わないGemini・Resend・DevLakeは、呼び出し経路がないことを証跡付きで `disabled` と登録できる。稼働するサービスも経過日数だけでは失効させず、確認した設定と証跡を保持する。
 
 実装条件の未完了は終了コード2。本番条件と分けて `result.json` の `problems` / `releaseProblems` に保存する。CLIログイン成功だけでは追加課金なしの証明にしない。GitHubボットの実在の設定も確認する。2026-10-21の所有者指示により `requireDedicatedWindowsUser=false` とし、専用Windowsユーザーは必須にしない。インストーラーは実行したWindowsユーザーでタスクを登録する。
 
-実装用の監査だけを登録する場合は次を使う。この操作ではGitHubの本番配信許可期限を書き換えない。
+実装用の監査だけを登録する場合は次を使う。この操作ではGitHubの本番配信用ポリシーハッシュを書き換えない。
 
 ```powershell
 node scripts/automation/record-audit.mjs C:/private/verified-development-audit.json --development
@@ -88,7 +103,7 @@ AI画面を変更した場合の例外は、独立レビュー後のクリーン
 
 専用Windowsユーザーは所有者判断で不要とした（`requireDedicatedWindowsUser=false`）。別ユーザーで実行したという監査証跡は作らない。将来trueへ戻す場合は専用ユーザーの実在確認が必要。GitHubボットと承認者の分離は維持し、ボットにはActions変数の書き込み権限を与えない。監査に `botHasNoVariableWrite=true` を含める。production環境がmainブランチのみを許可し、mainにPR必須・CI必須の保護があることもAPIで確認する。
 
-初期状態は**費用監査待ちで停止**する。認証済みCLIが存在することは課金設定の証明ではない。未確認の状態を自動で承認済みに書き換えない。
+初期状態では費用監査待ちで停止する。2026-10-21に所有者が確認した設定の証跡は、2026-10-29の移行でも元の確認日時とともに保持する。認証済みCLIが存在することは課金設定の証明ではなく、未確認の状態を自動で承認済みに書き換えない。
 
 ## 課金リスク一覧（2026-10-19調査）
 
@@ -118,7 +133,7 @@ VercelのSpend Managementは停止までに遅延があり、保存領域・追�
 1. 各サービスのBilling/Usage画面を所有者が確認し、非公開の証跡（日時、プラン、超過時の停止設定、対象プロジェクト）を用意する。カード番号・APIキーは記録しない。
 2. `%LOCALAPPDATA%/RetroLoopAutomation/audit.json` のコピーに結果を入力する。各サービスの `mode` は `included-hard-stop`、`free-hard-stop`、`disabled` のいずれか。必須サービス codex/claude/github/vercel/neon はdisabled不可。gemini/resend/devlakeはこの自動化から呼び出さなければdisabledでよい。
 3. 各項目に `verifiedAt`（ISO日時）と `evidence`（証跡の非公開保存先または確認した設定の説明）を入れる。`autoRechargeDisabled`、`productionLiveCallsDisabled`、`rollbackLiveCallsDisabled`、`vercelGitDeploymentsDisabled` は実際に確認した場合のみtrueにする。ゲート導入前の旧デプロイへ戻っても課金APIを呼べないよう、初回は本番側キーの無効化／削除まで確認する。
-4. 次のコマンドで検証・登録する。ローカル監査の更新とGitHubの配信許可期限の設定を行う。
+4. 次のコマンドで検証・登録する。ローカル監査の更新とGitHubの本番配信用ポリシーハッシュの設定を行う。
 
 ```powershell
 $env:RETRO_AUTOMATION_HOME = "$env:LOCALAPPDATA/RetroLoopAutomation"
@@ -126,9 +141,9 @@ node scripts/automation/record-audit.mjs C:/private/verified-retro-audit.json
 & "$env:RETRO_AUTOMATION_HOME/launch.ps1" --dry-run
 ```
 
-稼働するサービスの監査は7日で失効する。費用・セキュリティに関わるポリシー変更でも失効する。実装段階の期限後や実行条件を取得できない場合は実装を停止する。本番段階だけが未完了なら、PRを未マージで残す。実プラン未確認のサービスを無料として登録しない。本番配信workflowも監査期限を検証する。
+監査は経過日数だけでは失効しない。費用・セキュリティに関わるポリシー変更や外部の契約・追加課金設定の変更時に再確認する。実装段階の監査が不一致・未確認、または実行条件を取得できない場合は実装を停止する。本番段階だけが未完了なら、PRを未マージで残す。実プラン未確認のサービスを無料として登録しない。本番配信workflowも対象SHAのポリシーハッシュを検証する。
 
-現在、実課金設定へのアクセスを確認できていないため、初回監査は未完了。リポジトリ上の設定とCLI認証状態だけを観測済みとして扱う。
+初回監査は2026-10-21の所有者確認に基づく証跡として保存済みで、今回はそれを設定変更時の再確認方式へ移行する。CLIログインを新しい費用確認の代用にはしない。外部サービス側の設定変更を自動検知できない制約も維持する。
 
 ## 検証・停止・復旧
 
