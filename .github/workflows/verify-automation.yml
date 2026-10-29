@@ -44,7 +44,7 @@ jobs:
             if (!/^[a-f0-9]{40}$/.test(process.env.TARGET_SHA)) throw new Error('Invalid SHA');
             const { data } = await github.rest.repos.get(context.repo);
             if (data.private) throw new Error('Only public repositories may use unattended verification');
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_sha }}
           persist-credentials: false
