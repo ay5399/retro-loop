@@ -90,6 +90,11 @@ test('recovery finds the latest recovery-tagged plan when a task checkpoint lack
   assert.equal(result.plan.title, 'latest reviewed proposal');
 }));
 
+test('recovery retains nested approved context across a previous planning timeout', async () => fixture(async ({ fresh, prepareRecovery, previous }) => {
+  const result = await prepareRecovery({ ...previous, task: { branch: previous.task.branch, recovery: { plan: { title: 'original approved context' } } } }, fresh);
+  assert.equal(result.plan.title, 'original approved context');
+}));
+
 test('recovery rejects unsafe branch and protected candidate changes before apply', async () => fixture(async ({ original, fresh, calls, prepareRecovery, previous }) => {
   const applied = () => calls.filter(call => call.args[0] === 'apply').length;
   await assert.rejects(prepareRecovery({ ...previous, task: { branch: '../outside' } }, fresh), /Unsafe previous task branch/);

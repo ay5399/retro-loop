@@ -25,6 +25,19 @@ export function assertSafeStylesheet(css) {
   });
 }
 
+export function createFixtureChatStream({ complete, input, report }) {
+  return createUIMessageStream({ execute: async ({ writer }) => {
+    const messageId = `live-${randomBytes(16).toString('hex')}`;
+    const id = `${messageId}-text`;
+    writer.write({ type: 'start', messageId });
+    writer.write({ type: 'text-start', id });
+    const output = await complete(input, delta => writer.write({ type: 'text-delta', id, delta }));
+    report.transcripts.push({ input, ...output });
+    writer.write({ type: 'text-end', id });
+    writer.write({ type: 'finish', finishReason: 'stop' });
+  } });
+}
+
 export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoot = root, signal, expiresAt = Date.now() + 330_000 }) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   const { build } = localRequire('esbuild');
@@ -67,13 +80,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
       const input = body.messages?.filter(m => m.role === 'user').at(-1)?.parts?.filter(p => p.type === 'text').map(p => p.text).join('');
       if (body.teamId !== 'live-fixture' || body.retroId !== 'live-fixture' || input !== inputs[count]) { res.writeHead(400).end(); return; }
       count++;
-      const response = createUIMessageStreamResponse({ stream: createUIMessageStream({ execute: async ({ writer }) => {
-        const id = `live-${count}`;
-        writer.write({ type: 'text-start', id });
-        const output = await complete(input, delta => writer.write({ type: 'text-delta', id, delta }));
-        report.transcripts.push({ input, ...output });
-        writer.write({ type: 'text-end', id });
-      } }) });
+      const response = createUIMessageStreamResponse({ stream: createFixtureChatStream({ complete, input, report }) });
       res.writeHead(response.status, Object.fromEntries(response.headers));
       for await (const chunk of response.body) res.write(chunk);
       res.end();
@@ -97,6 +104,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
       await page.locator('[data-chat-send]').click();
       await expect(page.locator('[data-chat-send]')).toBeDisabled();
       await expect(page.locator('[data-chat-input]')).toBeEnabled({ timeout: Math.max(1, Math.min(90_000, expiresAt - Date.now())) });
+      await expect(page.locator('[data-chat-error]')).toHaveCount(0);
       const replies = page.locator('[data-ai-chat] li.justify-start');
       await expect(replies).toHaveCount(i + 1);
       expect((await replies.last().innerText()).trim().length).toBeGreaterThan(10);
