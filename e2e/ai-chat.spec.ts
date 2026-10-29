@@ -113,6 +113,42 @@ test("単回送信で待機状態から正常完了へ戻る（固定モック�
   expect(requests).toBe(1);
 });
 
+for (const { ending, expectedInput, expectedErrors } of [
+  { ending: "closed-text", expectedInput: "", expectedErrors: 0 },
+  { ending: "open-text", expectedInput: "  自分のProblemについて相談します\n  ", expectedErrors: 1 },
+  { ending: "lifecycle-without-finish", expectedInput: "  自分のProblemについて相談します\n  ", expectedErrors: 1 },
+] as const) {
+  test(`単独テキストと未完了ストリームの終端を区別する (${ending})`, async ({ page }) => {
+    await loginAsDev(page, MEMBER_EMAIL);
+    await page.goto(retroUrl());
+    let requests = 0;
+    await page.route(new URL("/api/chat", page.url()).href, async (route) => {
+      requests++;
+      const chunks = [
+        ...(ending === "lifecycle-without-finish" ? [{ type: "start", messageId: "unfinished" }] : []),
+        { type: "text-start", id: "standalone" },
+        { type: "text-delta", id: "standalone", delta: "架空のテキスト応答" },
+        ...(ending === "open-text" ? [] : [{ type: "text-end", id: "standalone" }]),
+      ];
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" },
+        body: chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n",
+      });
+    });
+    const input = page.locator("[data-chat-input]");
+    const draft = "  自分のProblemについて相談します\n  ";
+    await input.fill(draft);
+    await page.locator("[data-chat-send]").click();
+    await expect(page.locator("[data-ai-chat] li.justify-start")).toContainText("架空のテキスト応答");
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue(expectedInput);
+    await expect(page.locator("[data-chat-error]")).toHaveCount(expectedErrors);
+    await expect(page.getByText("未完了の応答です。再送すると置き換わります。")).toHaveCount(expectedErrors);
+    expect(requests).toBe(1);
+  });
+}
+
 for (const failure of ["503", "stream", "disconnect"] as const) {
   test(`相談失敗から編集して再送できる (${failure})`, async ({ page }) => {
     test.setTimeout(150_000);

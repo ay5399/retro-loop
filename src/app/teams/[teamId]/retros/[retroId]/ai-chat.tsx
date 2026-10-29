@@ -4,19 +4,27 @@ import { useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, generateId, type UIMessage, type UIMessageChunk } from "ai";
 
-// A clean EOF is not necessarily a completed response. Require the protocol's
-// finish event, including when it omits the optional finishReason.
+// Lifecycle streams require finish. The existing standalone text writer emits
+// no lifecycle events, so accept EOF only after all of its text blocks close.
 class CompleteChatTransport extends DefaultChatTransport<UIMessage> {
   protected processResponseStream(stream: ReadableStream<Uint8Array<ArrayBufferLike>>) {
     let finished = false;
+    let textOnly = true;
+    let closedText = false;
+    const openText = new Set<string>();
     return super.processResponseStream(stream).pipeThrough(
       new TransformStream<UIMessageChunk, UIMessageChunk>({
         transform(chunk, controller) {
           if (chunk.type === "finish") finished = true;
+          if (chunk.type === "text-start") openText.add(chunk.id);
+          else if (chunk.type === "text-end") {
+            closedText = openText.delete(chunk.id) || closedText;
+          } else if (chunk.type !== "text-delta") textOnly = false;
           controller.enqueue(chunk);
         },
         flush() {
-          if (!finished) throw new Error("Incomplete chat response");
+          const completeStandaloneText = textOnly && closedText && openText.size === 0;
+          if (!finished && !completeStandaloneText) throw new Error("Incomplete chat response");
         },
       }),
     );
