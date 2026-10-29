@@ -118,3 +118,42 @@ test('changed code and docs must be valid UTF-8 without replacement characters',
     assert.match((await validateCandidateTextFiles(root, ['linked/doc.md']))[0].reason, /symbolic link/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('actual Git diff rejects moved or reindented assertions with concrete restoration guidance', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'retro-diff-assertion-move-'));
+  const execute = promisify(execFile);
+  const original = '  expect(value).toBe(true);';
+  const originalBody = `test("original", () => {\n${original}\n  prepare();\n  exercise();\n  cleanup();\n});\n`;
+  try {
+    await execute('git', ['init'], { cwd: root });
+    await mkdir(path.join(root, 'e2e'));
+    const target = path.join(root, 'e2e/chat.spec.ts');
+    await writeFile(target, originalBody);
+    await execute('git', ['add', '.'], { cwd: root });
+    for (const replacement of [
+      'test("original", () => {\n  prepare();\n  exercise();\n  cleanup();\n});\ntest("regression", () => {\n' + original + '\n});\n',
+      originalBody.replace(original, `  ${original}`)
+    ]) {
+      await writeFile(target, replacement);
+      const { stdout } = await execute('git', ['diff', '--no-ext-diff'], { cwd: root, encoding: 'utf8' });
+      const findings = validateCandidateDiff(stdout);
+      const removed = findings.find(item => item.guidance.includes(JSON.stringify(original)));
+      assert.ok(removed, stdout);
+      assert.equal(removed.reason, 'Removing browser test coverage');
+      assert.match(removed.guidance, /Moves and reindentation are also rejected/);
+      assert.match(removed.guidance, /Restore the original existing test body unchanged; add separate regression tests/);
+      assert.throws(() => assertCandidateValid(findings), /expect\(value\)\.toBe\(true\)/);
+    }
+    await writeFile(target, originalBody + '\ntest("regression", () => {\n  expect(other).toBe(true);\n});\n');
+    const { stdout } = await execute('git', ['diff', '--no-ext-diff'], { cwd: root, encoding: 'utf8' });
+    assert.deepEqual(validateCandidateDiff(stdout), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('removed assertion excerpts remain bounded', () => {
+  const original = `expect("${'x'.repeat(500)}").toBe(true);`;
+  const [finding] = validateCandidateDiff(`+++ b/e2e/chat.spec.ts\n@@ -1 +0,0 @@\n-${original}\n`);
+  assert.ok(finding.guidance.includes(JSON.stringify(`${original.slice(0, 239)}?`)));
+  assert.ok(!finding.guidance.includes(original));
+});
