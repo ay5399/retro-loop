@@ -41,7 +41,7 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.lease.outputs.recover == 'true'
         with:
           node-version-file: .nvmrc
