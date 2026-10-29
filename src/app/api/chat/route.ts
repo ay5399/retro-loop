@@ -51,9 +51,11 @@ export async function POST(req: Request) {
   if (isMockLlm()) {
     return createUIMessageStreamResponse({
       stream: createUIMessageStream({ execute({ writer }) {
+        writer.write({ type: "start" });
         writer.write({ type: "text-start", id: "mock" });
         writer.write({ type: "text-delta", id: "mock", delta: "今回の付箋を確認しました。次の一歩を一つ選び、次回のふりかえりで効果を確かめましょう。" });
         writer.write({ type: "text-end", id: "mock" });
+        writer.write({ type: "finish", finishReason: "stop" });
       } }),
     });
   }
