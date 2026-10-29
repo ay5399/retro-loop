@@ -30,8 +30,8 @@ test('explicit migration preserves every original evidence field and timestamp w
   assert.deepEqual(migrated.services, original.services);
   assert.equal(migrated.policyHash, policyHash(policy));
   for (const stage of ['development', 'release']) assert.equal(migrated.policyHashes[stage], policyHash(policy, stage));
-  const { policyHash: ignoredHash, policyHashes: ignoredHashes, ...retained } = migrated;
-  const { policyHash: originalHashValue, policyHashes: originalHashes, ...evidence } = original;
+  const retained = structuredClone(migrated), evidence = structuredClone(original);
+  for (const value of [retained, evidence]) { delete value.policyHash; delete value.policyHashes; }
   assert.deepEqual(retained, evidence);
   assert.deepEqual(auditProblems(policy, migrated, new Date('2036-01-01T00:00:00Z')), []);
   assert.deepEqual(migrateAuditPolicyHashes(policy, migrated), migrated);
