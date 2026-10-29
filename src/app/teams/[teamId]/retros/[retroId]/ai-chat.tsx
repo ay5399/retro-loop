@@ -1,8 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, generateId, type UIMessageChunk } from "ai";
+
+// A clean EOF is not necessarily a completed response. Require the protocol's
+// finish event, including when it omits the optional finishReason.
+class CompleteChatTransport extends DefaultChatTransport {
+  protected processResponseStream(stream: ReadableStream<Uint8Array<ArrayBufferLike>>) {
+    let finished = false;
+    return super.processResponseStream(stream).pipeThrough(
+      new TransformStream<UIMessageChunk, UIMessageChunk>({
+        transform(chunk, controller) {
+          if (chunk.type === "finish") finished = true;
+          controller.enqueue(chunk);
+        },
+        flush() {
+          if (!finished) throw new Error("Incomplete chat response");
+        },
+      }),
+    );
+  }
+}
 
 // ふりかえり画面に併設するAIチャットアシスタント（ストリーミング表示）。
 // Vercel AI SDK の useChat と /api/chat を接続する。
@@ -27,20 +46,46 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
 }) {
   const [input, setInput] = useState("");
   const [problemId, setProblemId] = useState("");
+  const pending = useRef<{ id: string; text: string } | null>(null);
+  const sending = useRef(false);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  function restoreDraft() {
+    if (!pending.current) return;
+    setInput(pending.current.text);
+    setFailedId(pending.current.id);
+  }
   const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({
+    transport: new CompleteChatTransport({
       api: "/api/chat",
       body: { retroId, teamId },
     }),
+    onError: restoreDraft,
+    onFinish: ({ isAbort, isDisconnect, isError, finishReason }) => {
+      if (isAbort || isDisconnect || isError || finishReason === "error") {
+        restoreDraft();
+      } else {
+        pending.current = null;
+      }
+    },
   });
 
   const busy = status === "submitted" || status === "streaming";
+  const failedIndex = failedId ? messages.findIndex((message) => message.id === failedId) : -1;
 
   function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
-    sendMessage({ text: trimmed });
+    if (!trimmed || busy || sending.current) return;
+    sending.current = true;
+    const id = failedId ?? generateId();
+    // Keep the exact draft for recovery; preserve the existing trimmed payload.
+    pending.current = { id, text };
+    setFailedId(null);
     setInput("");
+    // Replacing the failed user turn also discards its incomplete response.
+    const request = failedId
+      ? sendMessage({ text: trimmed, messageId: failedId })
+      : sendMessage({ id, role: "user", parts: [{ type: "text", text: trimmed }] });
+    void request.catch(restoreDraft).finally(() => { sending.current = false; });
   }
 
   return (
@@ -88,7 +133,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
           </div>
         ) : (
           <ul className="space-y-3">
-            {messages.map((m) => {
+            {messages.map((m, index) => {
               const text = m.parts
                 .filter((p) => p.type === "text")
                 .map((p) => (p as { text: string }).text)
@@ -126,6 +171,9 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
                       </div>
                     ) : null}
                     {text || (busy && !isUser && toolNames.length === 0 ? "…" : "")}
+                    {!isUser && failedIndex >= 0 && index > failedIndex ? (
+                      <p className="text-xs text-muted">未完了の応答です。再送すると置き換わります。</p>
+                    ) : null}
                   </div>
                 </li>
               );
@@ -134,6 +182,11 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
         )}
       </div>
 
+      {failedId ? (
+        <p role="alert" data-chat-error className="text-sm text-red-700">
+          AIの応答を完了できませんでした。相談文を入力欄に戻しました。内容を確認・編集して「送信」を押してください。自動では再送しません。
+        </p>
+      ) : null}
       <form
         className="flex items-end gap-2"
         onSubmit={(e) => {
