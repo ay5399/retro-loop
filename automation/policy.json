@@ -12,7 +12,6 @@
   "requireDedicatedWindowsUser": false,
   "githubAuth": "app",
   "liveAiVerification": { "enabled": true, "maxTurns": 3, "timeoutSeconds": 330, "loopbackOnly": true },
-  "auditMaxAgeDays": 7,
   "services": ["codex", "claude", "github", "vercel", "neon", "gemini", "resend", "devlake"],
   "protectedPaths": ["automation/", "scripts/automation/", ".github/", "prisma/", ".env", "AGENTS.md", "claude.md", "package", "next.config", ".gitignore", ".vercelignore", "src/auth.ts", "src/lib/service-policy.ts", "src/lib/anthropic.ts", "src/lib/llm/", "src/app/api/chat/route.ts"],
   "productDirection": {

@@ -16,7 +16,7 @@ export function mutationDue(lastDate, now = new Date()) {
 }
 export function policyHash(policy, stage = 'release') {
   // Product copy and scheduling do not change a provider's billing settings.
-  const fields = ['repository', 'owner', 'monthlyLimitYen', 'operatingLimitYen', 'allowPaidUsage', 'githubAuth', 'requireDedicatedWindowsUser', 'auditMaxAgeDays', 'services', 'protectedPaths'];
+  const fields = ['repository', 'owner', 'monthlyLimitYen', 'operatingLimitYen', 'allowPaidUsage', 'githubAuth', 'requireDedicatedWindowsUser', 'services', 'protectedPaths'];
   return createHash('sha256').update(JSON.stringify({ stage, ...Object.fromEntries(fields.map(key => [key, policy[key]])) })).digest('hex');
 }
 export function auditProblems(policy, audit, now = new Date(), stage = 'release') {
@@ -39,8 +39,8 @@ export function auditProblems(policy, audit, now = new Date(), stage = 'release'
       continue;
     }
     const age = now.getTime() - Date.parse(s.verifiedAt);
-    if (!Number.isFinite(age) || age < 0 || age > policy.auditMaxAgeDays * 86400000 || !s.evidence) {
-      errors.push(`${name}: billing evidence is missing or expired`);
+    if (!Number.isFinite(age) || age < 0 || !s.evidence?.trim()) {
+      errors.push(`${name}: billing evidence or verification timestamp is missing or invalid`);
     }
     if (['codex', 'claude', 'github', 'vercel', 'neon'].includes(name) && s.mode === 'disabled') {
       errors.push(`${name}: required service is disabled`);

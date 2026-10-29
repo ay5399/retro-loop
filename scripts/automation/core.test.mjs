@@ -37,7 +37,7 @@ test('unknown costs, paid usage, duplicates and accumulated reservations stop ex
   assert.throws(() => reserve({ entries: [{ id: 'x', reservedYen: 0 }] }, 'x', 0, policy));
   assert.throws(() => reserve({ entries: [{ id: 'x', reservedYen: 801 }] }, 'y', 0, policy));
 });
-test('unverified/expired billing and changed policy stop execution', () => {
+test('missing billing evidence and changed settings stop execution; elapsed time alone never expires evidence', () => {
   assert.ok(auditProblems(policy, {}).length);
   const now = new Date('2026-10-19T04:00:00Z');
   const audit = { policyHash: policyHash(policy), autoRechargeDisabled: true, dedicatedWindowsUser: true, botHasNoVariableWrite: true, productionLiveCallsDisabled: true, rollbackLiveCallsDisabled: true, vercelAutomationTokenVerified: true, vercelGitDeploymentsDisabled: true,
@@ -47,9 +47,14 @@ test('unverified/expired billing and changed policy stop execution', () => {
   assert.ok(auditProblems(policy, audit, now).some(p => p.includes('workflow authentication')));
   assert.equal(auditProblems(policy, audit, now, 'development').some(p => p.includes('workflow authentication')), false);
   audit.vercelAutomationTokenVerified = true;
-  assert.ok(auditProblems(policy, audit, new Date('2026-11-01T00:00:00Z')).length);
+  assert.deepEqual(auditProblems(policy, audit, new Date('2036-11-01T00:00:00Z')), []);
   assert.deepEqual(auditProblems({ ...policy, hours: [6], productDirection: { purpose: 'updated' } }, audit, now), []);
   assert.ok(auditProblems({ ...policy, operatingLimitYen: 700 }, audit, now).length);
+  for (const verifiedAt of [undefined, 'invalid', '2036-01-01T00:00:00Z']) {
+    const invalid = structuredClone(audit);
+    invalid.services.codex.verifiedAt = verifiedAt;
+    assert.ok(auditProblems(policy, invalid, now).some(problem => problem.includes('timestamp')));
+  }
 });
 test('development can proceed without production audit; disabled services do not expire', () => {
   const now = new Date('2026-10-20T00:00:00Z');

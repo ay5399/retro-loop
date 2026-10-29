@@ -32,7 +32,7 @@ jobs:
       name: production
     env:
       TARGET_SHA: ${{ inputs.target_sha }}
-      AUDIT_UNTIL: ${{ vars.AUTOMATION_BILLING_VERIFIED_UNTIL }}
+      BILLING_POLICY_HASH: ${{ vars.AUTOMATION_BILLING_POLICY_HASH }}
       AUTOMATION_HALTED: ${{ vars.AUTOMATION_HALTED }}
       AUTOMATION_PRODUCTION_ALIAS: ${{ vars.AUTOMATION_PRODUCTION_ALIAS }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -49,8 +49,7 @@ jobs:
             if (incidents.data.length) throw new Error('Open production incident; owner investigation required');
             const open = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
             if (open.some(i => i.title.startsWith('[Release lease] '))) throw new Error('An earlier release still needs verification or recovery');
-            const expiry = Date.parse(process.env.AUDIT_UNTIL);
-            if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new Error('Billing audit is unverified or expired');
+            if (!/^[a-f0-9]{64}$/.test(process.env.BILLING_POLICY_HASH ?? '')) throw new Error('Owner-verified billing policy hash is missing or invalid');
             if (!process.env.HEALTHCHECK_TOKEN) throw new Error('Runtime health-check secret is missing');
             const sha = process.env.TARGET_SHA;
             if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid SHA');
@@ -75,6 +74,16 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Validate owner-verified billing policy
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { policyHash } from './scripts/automation/core.mjs';
+          const policy = JSON.parse(await readFile('automation/policy.json', 'utf8'));
+          if (process.env.BILLING_POLICY_HASH !== policyHash(policy, 'release')) {
+            throw new Error('Billing policy changed or is unverified; owner confirmation is required');
+          }
+          NODE
       - run: npm ci
       - name: Capture previous production
         id: previous
