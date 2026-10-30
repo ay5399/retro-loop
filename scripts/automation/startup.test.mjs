@@ -13,7 +13,7 @@ const end = source.indexOf('  const tracking =', start);
 assert.ok(start >= 0 && end > start, 'Actual main startup recovery markers must exist');
 const startupSource = source.slice(start, end);
 
-test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json, save }) => {
+test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json }) => {
   const task = { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-unresolved' } };
   await add('2026-10-25-5', { status: 'awaiting-verification' }, task);
   for (const id of ['2026-10-25-13', '2026-10-25-21', '2026-10-26-5']) {

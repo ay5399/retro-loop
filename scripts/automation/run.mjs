@@ -171,12 +171,19 @@ async function resumeLiveVerification(previous) {
     await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', reason });
     return { status: 'awaiting-verification', reason };
   };
-  if (!liveRetryAllowed(task, { manual: process.argv.includes('--retry-live-verification') })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.');
-  if (!/^auto\/(normal|mutation)-[a-z0-9-]+$/i.test(task.branch ?? '') || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !task.result) return hold('Invalid retained live-verification identity.');
-  if (task.pr) return resumePendingRelease(previous);
+  if (!liveRetryAllowed(task, { manual: ['--retry-live-verification', '--recover-only', '--manual-run'].every(flag => process.argv.includes(flag)) })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.');
+  if (task.kind !== 'normal') return hold('Isolated mutation candidate requires diagnosis; never route it into ordinary publication.');
+  if (!/^auto\/normal-[a-z0-9-]+$/i.test(task.branch ?? '') || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !task.result) return hold('Invalid retained live-verification identity.');
+  if (task.pr) {
+    task = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1 };
+    await save(path.join(runDir, 'task.json'), task);
+    return resumePendingRelease({ ...previous, task });
+  }
   const dir = await workspace(task.branch, true);
   return withWorkspace(dir, async () => {
     if (await git(['rev-parse', 'HEAD'], dir) !== task.sha || await git(['status', '--porcelain'], dir)) return hold('Retained candidate changed; diagnosis required before any retry.');
+    task = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1 };
+    await save(path.join(runDir, 'task.json'), task);
     const originalSha = task.sha;
     await git(['fetch', 'origin', 'main'], dir);
     try { await git(['rebase', 'origin/main'], dir); }
@@ -186,15 +193,18 @@ async function resumeLiveVerification(previous) {
     }
     const sha = await git(['rev-parse', 'HEAD'], dir);
     if (sha !== task.sha) {
-      task = { ...task, sha, verdict: await review(dir, sha, task.result) };
+      task = { ...task, sha, liveFailure: { category: 'verification-unresolved' } };
+      await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked' });
+      task = { ...task, verdict: await review(dir, sha, task.result) };
       await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked' });
     }
     const files = (await git(['diff', 'origin/main...HEAD', '--name-only', '-z'], dir)).split('\0').filter(Boolean);
     if (!files.length || changedPathsBlocked(files, policy).length) return hold('Retained candidate has no allowed diff.');
     assertCandidateValid([...(await validateCandidateTextFiles(dir, files)), ...validateCandidateDiff(await git(['diff', 'origin/main...HEAD'], dir))]);
+    if (task.verdict?.verdict !== 'approve' || task.verdict.sha !== task.sha) return hold('Retained candidate review is not approved; diagnosis required.');
     requireReview(task.verdict, task.sha);
     if (task.result.risk !== 'reversible' || task.verdict.risk !== 'reversible') return hold('Retained candidate requires owner approval.');
-    const checkpoint = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1, previousRun: previous.id };
+    const checkpoint = { ...task, previousRun: previous.id };
     await save(path.join(runDir, 'task.json'), checkpoint);
     try { await verifyLiveCandidate(dir, task.sha, 'retained-live-ai', checkpoint); }
     catch (error) { if (error.liveVerificationBlocked) return { status: 'awaiting-verification', reason: error.message }; throw error; }
@@ -716,7 +726,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
         // Review before publishing and executing the candidate in GitHub Actions.
         verdict = await review(dir, sha, { ...result, approvedPlan: plan }, { attempt });
         requireReview(verdict, sha);
-        if (needsLiveAiVerification(files)) await verifyLiveCandidate(dir, sha, `${taskTag}-live-ai-${attempt}`, { ...checkpoint, verdict });
+        if (needsLiveAiVerification(files)) await verifyLiveCandidate(dir, sha, `${taskTag}-live-ai-${attempt}`, { ...checkpoint, kind, branch, sha, result, verdict });
         validationStage = 'publishing';
         const target = existingRelease ? checkpoint.remoteBranch : branch;
         const remoteRef = `refs/heads/${target}`;

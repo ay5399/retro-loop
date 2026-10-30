@@ -36,6 +36,43 @@ function load(name, next, context) {
   return new AsyncFunction(...Object.keys(context), source.slice(source.indexOf(`async function ${name}(`), source.indexOf(`async function ${next}(`)) + `; return ${name};`)(...Object.values(context));
 }
 
+test('PR retries stop after two launches; mutation never reaches publication', async () => {
+  let task = { kind: 'normal', pr: 1, branch: 'auto/normal-retained', sha: 'a'.repeat(40), result: {}, liveFailure: { category: 'provider-unavailable' } };
+  let attempts = 0;
+  const fn = await load('resumeLiveVerification', 'main', {
+    path, runDir: '/run', process: { argv: [] }, liveRetryAllowed,
+    save: async (file, value) => { task = value; },
+    resumePendingRelease: async previous => { attempts++; assert.equal(previous.task.liveVerificationRetries, attempts); return { status: 'awaiting-verification' }; },
+  });
+  for (let i = 0; i < 3; i++) assert.equal((await fn({ task })).status, 'awaiting-verification');
+  assert.equal(attempts, 2);
+  task = { ...task, kind: 'mutation', branch: 'auto/mutation-retained', liveVerificationRetries: 0 };
+  assert.equal((await fn({ task })).status, 'awaiting-verification');
+  assert.equal(attempts, 2);
+});
+
+test('rebase review rejection is held with new SHA and consumes the retry before review', async () => {
+  const oldSha = 'a'.repeat(40), newSha = 'b'.repeat(40), writes = [];
+  let rebased = false;
+  const fn = await load('resumeLiveVerification', 'main', {
+    path, runDir: '/run', process: { argv: [] }, liveRetryAllowed, policy: {},
+    save: async (file, value) => writes.push(value), workspace: async () => '/candidate', withWorkspace: async (dir, callback) => callback(),
+    git: async args => {
+      if (args[0] === 'rebase') rebased = true;
+      if (args[0] === 'rev-parse') return rebased ? newSha : oldSha;
+      if (args.includes('--name-only')) return 'src/component.tsx';
+      return '';
+    },
+    review: async (dir, sha) => { assert.equal(writes.at(-1).liveVerificationRetries, 1); assert.equal(writes.at(-1).sha, newSha); return { sha, verdict: 'reject', risk: 'approval-required' }; },
+    changedPathsBlocked: () => [], validateCandidateTextFiles: async () => [], validateCandidateDiff: () => [], assertCandidateValid: () => {},
+  });
+  const outcome = await fn({ task: { kind: 'normal', branch: 'auto/normal-retained', sha: oldSha, result: {}, liveFailure: { category: 'provider-unavailable' } } });
+  assert.equal(outcome.status, 'awaiting-verification');
+  assert.equal(writes.at(-1).sha, newSha);
+  assert.equal(writes.at(-1).verdict.verdict, 'reject');
+  assert.equal(writes.at(-1).liveFailure.category, 'verification-unresolved');
+});
+
 test('provider diagnostics distinguish quota and transport without storing upstream messages', () => {
   assert.deepEqual(providerFailure({ codexErrorInfo: 'UsageLimitExceeded', message: 'secret@example.com' }), { category: 'usage-limit', code: 'UsageLimitExceeded' });
   assert.equal(providerFailure({ codexErrorInfo: { HttpConnectionFailed: { httpStatusCode: 503 } } }).category, 'provider-unavailable');
