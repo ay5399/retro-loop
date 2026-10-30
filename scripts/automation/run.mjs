@@ -7,7 +7,7 @@ import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, require
 import { createAppAuth } from './github-app.mjs';
 import { dispatchWorkflow } from './workflow.mjs';
 import { collectEvidence } from './evidence.mjs';
-import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid } from './candidate.mjs';
+import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox } from './candidate.mjs';
 import { inspectPreviousRun, reconcileStartup } from './history.mjs';
 import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';
 
@@ -549,7 +549,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
         cwd: dir, env, input: instruction, timeout: timeoutMs, log: path.join(runDir, `${taskTag}-${stage}-codex.log`),
       });
       const executionLog = await readFile(path.join(runDir, `${taskTag}-${stage}-codex.log`), 'utf8');
-      if (!stage.startsWith('plan-') && /^sandbox: read-only\s*$/m.test(executionLog)) throw new Error('Codex workspace-write sandbox was not activated; implementation was not attempted');
+      if (!stage.startsWith('plan-')) requireImplementationSandbox(executionLog);
       if (await readFile(path.join(dir, '.git'), 'utf8') !== gitMetadata) throw new Error('Worktree Git metadata changed');
       const generated = await json(output);
       const { unlink } = await import('node:fs/promises');
