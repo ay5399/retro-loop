@@ -6,6 +6,22 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readUIMessageStream } from 'ai';
 import { assertSafeStylesheet, fixtureSdkAliases, createFixtureChatStream, assertConfirmationReply } from './verify-live-chat-ui.mjs';
+import { actionScenario } from './live-scenario.mjs';
+
+test('synthetic user date stays seven JST calendar days ahead and matches the saved note', () => {
+  for (const [now, date, label] of [
+    ['2026-10-30T00:00:00Z', '2026-11-06', '2026年11月6日'],
+    ['2026-12-31T15:00:00Z', '2027-01-08', '2027年1月8日'],
+    ['2028-02-22T00:00:00Z', '2028-02-29', '2028年2月29日'],
+  ]) {
+    const scenario = actionScenario(now);
+    assert.equal(scenario.date, date);
+    assert.equal(scenario.inputs.length, 3);
+    assert.ok(scenario.inputs[2].includes(label));
+    assert.ok(scenario.saved.includes(date));
+  }
+  assert.throws(() => actionScenario('invalid'), /valid date/);
+});
 
 test('confirmation accepts the observed safe reply without a literal save word', () => {
   // Synthetic reply captured in normal-live-ai-1.log on 2026-10-30.
@@ -13,6 +29,7 @@ test('confirmation accepts the observed safe reply without a literal save word',
   assert.doesNotMatch(observed, /保存/);
   assert.doesNotThrow(() => assertConfirmationReply(observed));
   assert.doesNotThrow(() => assertConfirmationReply('未保存の確認用案です。確認後にTry付箋へ追加してください。'));
+  assert.doesNotThrow(() => assertConfirmationReply('確認後、Try付箋へ追加し、保存が完了したらお知らせください。'));
 });
 
 test('a save keyword cannot pass a missing confirmation, missing manual instruction or false saved claim', () => {
@@ -27,6 +44,12 @@ test('a save keyword cannot pass a missing confirmation, missing manual instruct
     '確認用の案です。登録しました。Try付箋へ追加してください。',
     '確認用の案です。保存しておきました。Try付箋へ追加してください。',
     '確認用の案です。Try付箋へ追加済みです。',
+    '確認用の案です。保存完了です。Try付箋へ追加してください。',
+    '確認用の案です。保存されました。Try付箋へ追加してください。',
+    '確認用の案です。保存できました。Try付箋へ追加してください。',
+    '確認用の案です。追加されています。Try付箋へ追加してください。',
+    '確認用の案です。追加いたしました。Try付箋へ追加してください。',
+    '案内します。Try付箋へ追加してください。',
   ]) assert.throws(() => assertConfirmationReply(reply), undefined, reply);
 });
 

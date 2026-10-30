@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { actionScenario } from './live-scenario.mjs';
 const home = process.env.RETRO_AUTOMATION_HOME;
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Live verification requires Node.js 24 or later, matching .nvmrc');
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
@@ -61,7 +62,8 @@ try {
   report.model = model.model ?? model.id;
   const thread = await rpc('thread/start', { model: report.model, cwd: dir, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: true,
     baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。\n' + ACTION_GUIDANCE });
-  const inputs = ['レビュー待ちが長いので「気をつける」を次のアクションにしようと思います。具体化を手伝って。', '自分でできることにしたい。担当者や期限はまだ決めていません。勝手に決めず、必要なことを質問して。', '担当は私。2026年10月26日の朝会後に、自分のPRへレビュー希望時刻を記載してチームに共有します。保存前に確認できる形でまとめて。'];
+  const { inputs, saved, date } = actionScenario();
+  report.scenarioDate = date;
   const complete = async (input, onDelta) => {
     const completed = new Promise((resolve, reject) => { active = { resolve, reject, onDelta, threadId: thread.thread.id, text: '', started: Date.now() }; });
     const start = rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: input }] });
@@ -73,7 +75,7 @@ try {
     report.scope = 'Real AiChat and KptBoard UI; real Plus inference; synthetic persistence, no production DB';
     report.excluded = 'Production chat route, Gemini provider, authentication and PostgreSQL persistence are covered separately by mock CI, not this live fixture';
     const { runBrowserProbe } = await import('./verify-live-chat-ui.mjs');
-    await runBrowserProbe({ complete, dir, report, inputs, sourceRoot, signal: controller.signal, expiresAt });
+    await runBrowserProbe({ complete, dir, report, inputs, saved, sourceRoot, signal: controller.signal, expiresAt });
   } else {
     for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }
