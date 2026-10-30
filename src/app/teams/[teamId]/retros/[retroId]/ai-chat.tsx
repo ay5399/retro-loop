@@ -78,6 +78,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
   });
 
   const busy = status === "submitted" || status === "streaming";
+  const hasDraft = input.length > 0;
   const failedIndex = failedId ? messages.findIndex((message) => message.id === failedId) : -1;
 
   function submit(text: string) {
@@ -94,6 +95,11 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
       ? sendMessage({ text: trimmed, messageId: failedId })
       : sendMessage({ id, role: "user", parts: [{ type: "text", text: trimmed }] });
     void request.catch(restoreDraft).finally(() => { sending.current = false; });
+  }
+
+  function submitSuggestion(text: string) {
+    if (hasDraft) return;
+    submit(text);
   }
 
   return (
@@ -131,13 +137,19 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
                   key={s}
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  onClick={() => submit(s)}
-                  disabled={busy}
+                  onClick={() => submitSuggestion(s)}
+                  disabled={busy || hasDraft}
+                  aria-describedby={hasDraft ? "consultation-draft-guard" : undefined}
                 >
                   {s}
                 </button>
               ))}
             </div>
+            {hasDraft ? (
+              <p id="consultation-draft-guard" className="text-sm text-muted">
+                入力中の相談文を守るため、候補は使えません。入力欄の送信から相談できます。
+              </p>
+            ) : null}
           </div>
         ) : (
           <ul className="space-y-3">

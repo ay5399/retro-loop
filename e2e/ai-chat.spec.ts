@@ -7,6 +7,95 @@ import { loginAsDev, loginViaMagicLink } from "./helpers";
 // - 認可（未ログイン=401 / 非メンバー=403）は /api/chat を直叩きして確認する。
 const prisma = new PrismaClient();
 
+const DRAFT_GUARD_SUGGESTIONS = ["今回の総括をして", "前回からの積み残しを指摘して", "次に試すべきことは?"];
+
+async function mockDraftGuardChat(page: Page) {
+  const payloads: { messages: { role: string; parts: { type: string; text?: string }[] }[] }[] = [];
+  await page.route("**/api/chat", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    payloads.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" },
+      body: [
+        { type: "start", messageId: "draft-guard-answer" },
+        { type: "text-start", id: "draft-guard-text" },
+        { type: "text-delta", id: "draft-guard-text", delta: "本人が取り組みたい行動を教えてください。" },
+        { type: "text-end", id: "draft-guard-text" },
+        { type: "finish" },
+      ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n",
+    });
+  });
+  return payloads;
+}
+
+test("編集した本人Problemの下書きを候補の誤送信から守る", async ({ page }) => {
+  await loginAsDev(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  const payloads = await mockDraftGuardChat(page);
+  const input = page.locator("[data-chat-input]");
+  await expect(input).toHaveValue("");
+  for (const name of DRAFT_GUARD_SUGGESTIONS) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeEnabled();
+  }
+  await page.screenshot({ path: "e2e/__screens__/consultation-draft-guard-before.png", fullPage: true });
+  await page.getByLabel("自分のProblemから相談する").selectOption({ label: "レビュー待ちが長かった" });
+  await page.getByRole("button", { name: "相談文の下書きに追加" }).click();
+  const draft = `  ${await input.inputValue()}\nまず自分で待ち時間を調べたいです。\n  `;
+  await input.fill(draft);
+  for (const name of DRAFT_GUARD_SUGGESTIONS) {
+    const suggestion = page.getByRole("button", { name, exact: true });
+    await expect(suggestion).toBeDisabled();
+    // Synthetic dispatch also exercises the handler guard behind disabled UI.
+    await suggestion.dispatchEvent("click");
+  }
+  await expect(page.locator("#consultation-draft-guard")).toHaveText("入力中の相談文を守るため、候補は使えません。入力欄の送信から相談できます。");
+  await expect(input).toHaveValue(draft);
+  await expect(page.locator("[data-ai-chat] li")).toHaveCount(0);
+  expect(payloads).toHaveLength(0);
+  await page.screenshot({ path: "e2e/__screens__/consultation-draft-guard-after.png", fullPage: true });
+  await page.locator("[data-chat-send]").click();
+  await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText("本人が取り組みたい行動を教えてください。");
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue("");
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].messages).toHaveLength(1);
+  expect(payloads[0].messages[0].role).toBe("user");
+  expect(payloads[0].messages[0].parts).toEqual([{ type: "text", text: draft.trim() }]);
+});
+
+test("空白と改行も候補から守り、完全消去すると候補を一度送信できる", async ({ page }) => {
+  await loginAsDev(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  const payloads = await mockDraftGuardChat(page);
+  const input = page.locator("[data-chat-input]");
+  for (const draft of [" ", "\n", "  \n  "]) {
+    await input.fill(draft);
+    for (const name of DRAFT_GUARD_SUGGESTIONS) {
+      const suggestion = page.getByRole("button", { name, exact: true });
+      await expect(suggestion).toBeDisabled();
+      await suggestion.dispatchEvent("click");
+    }
+    await expect(page.locator("#consultation-draft-guard")).toBeVisible();
+    await expect(input).toHaveValue(draft);
+    await expect(page.locator("[data-chat-send]")).toBeDisabled();
+    await expect(page.locator("[data-ai-chat] li")).toHaveCount(0);
+    expect(payloads).toHaveLength(0);
+  }
+  await input.fill("");
+  await expect(page.locator("#consultation-draft-guard")).toHaveCount(0);
+  for (const name of DRAFT_GUARD_SUGGESTIONS) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeEnabled();
+  }
+  await page.getByRole("button", { name: DRAFT_GUARD_SUGGESTIONS[0], exact: true }).click();
+  await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText("本人が取り組みたい行動を教えてください。");
+  await expect(input).toBeEnabled();
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].messages).toHaveLength(1);
+  expect(payloads[0].messages[0].role).toBe("user");
+  expect(payloads[0].messages[0].parts).toEqual([{ type: "text", text: DRAFT_GUARD_SUGGESTIONS[0] }]);
+});
+
 const MEMBER_EMAIL = "e2e-chat@example.com";
 const OUTSIDER_EMAIL = "e2e-chat-outsider@example.com";
 const OTHER_MEMBER_EMAIL = "e2e-chat-other-member@example.com";
