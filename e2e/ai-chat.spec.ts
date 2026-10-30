@@ -106,6 +106,41 @@ test("空白と改行も候補から守り、完全消去すると候補を一�
   expect(payloads[0].messages[0].parts).toEqual([{ type: "text", text: DRAFT_GUARD_SUGGESTIONS[0] }]);
 });
 
+test("送信失敗で戻った相談文を候補で置き換えず、編集して再送できる", async ({ page }) => {
+  await loginAsDev(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  let requests = 0;
+  await page.route("**/api/chat", async (route) => {
+    requests++;
+    await route.fulfill({ status: 503, body: "synthetic draft guard failure" });
+  });
+  const input = page.locator("[data-chat-input]");
+  const draft = "  自分のProblemについて、まず待ち時間を調べたいです。\n日付は未定です。\n  ";
+  await input.fill(draft);
+  await page.locator("[data-chat-send]").click();
+  await expect(page.locator("[data-chat-error]")).toBeVisible();
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue(draft);
+  for (const name of DRAFT_GUARD_SUGGESTIONS) {
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
+  expect(requests).toBe(1);
+  await page.unroute("**/api/chat");
+  const payloads = await mockDraftGuardChat(page);
+  const edited = `${draft}\n担当は私です。`;
+  await input.fill(edited);
+  await expect(input).toHaveValue(edited);
+  expect(payloads).toHaveLength(0);
+  await page.locator("[data-chat-send]").click();
+  await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText("本人が取り組みたい行動を教えてください。");
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue("");
+  await expect(page.locator("[data-chat-error]")).toHaveCount(0);
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].messages.filter((message) => message.role === "user")).toHaveLength(1);
+  expect(payloads[0].messages.at(-1)?.parts).toEqual([{ type: "text", text: edited.trim() }]);
+});
+
 test.beforeAll(async () => {
   // 前回残骸の掃除
   await prisma.team.deleteMany({ where: { name: TEAM_NAME } });
