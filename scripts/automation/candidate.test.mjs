@@ -5,10 +5,47 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox } from './candidate.mjs';
+import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, recoveryVerificationEvidence } from './candidate.mjs';
 const diff = (text, file = 'e2e/chat.spec.ts') => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +12,1 @@\n+${text}\n`;
 
 const launch = mode => `OpenAI Codex v0.163.0\n--------\nworkdir: test\nmodel: test\napproval: never\nsandbox: ${mode}\nsession id: current\n--------\n`;
+
+test('verification evidence is from the committed clean revision and rejects dirty working content', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'retro-current-verification-'));
+  const execute = promisify(execFile);
+  const git = async args => (await execute('git', args, { cwd: dir })).stdout.trimEnd();
+  try {
+    await git(['init']); await git(['config', 'user.name', 'Evidence Test']); await git(['config', 'user.email', 'test@example.invalid']);
+    await mkdir(path.join(dir, 'scripts/automation'), { recursive: true });
+    const file = path.join(dir, 'scripts/automation/verify-live-chat-ui.mjs');
+    await writeFile(file, 'current committed check');
+    await git(['add', '.']); await git(['commit', '-m', 'current checker']);
+    const proof = await recoveryVerificationEvidence(dir, git);
+    assert.equal(proof.sha, await git(['rev-parse', 'HEAD']));
+    assert.equal(proof.files[0].content, 'current committed check');
+    assert.match(proof.files[1].unavailable, /Missing/);
+    await writeFile(file, 'uncommitted different check');
+    const dirty = await recoveryVerificationEvidence(dir, git);
+    assert.match(dirty.unavailable, /dirty/);
+    assert.deepEqual(dirty.files, []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('verification snapshot omits symlinks and oversized blobs without reading their contents', async () => {
+  const calls = [], sha = 'a'.repeat(40);
+  const git = async args => {
+    calls.push(args);
+    if (args[0] === 'rev-parse') return sha;
+    if (args[0] === 'status') return '';
+    if (args[0] === 'ls-tree') return `${args.at(-1).includes('verify-live') ? '120000' : '100644'} blob ${sha}\t${args.at(-1)}`;
+    if (args[0] === 'cat-file') return '16385';
+    assert.fail('Source contents must not be read');
+  };
+  const proof = await recoveryVerificationEvidence('fixture', git);
+  assert.match(proof.files[0].unavailable, /not a regular/);
+  assert.match(proof.files[1].unavailable, /16 KiB/);
+  assert.equal(calls.some(args => args[0] === 'show'), false);
+});
 
 test('installed CLI stdin probe stderr is accepted without scanning quoted tool output', async () => {
   // Captured 2026-10-30 with the installed runner command, stdin and elevated workspace-write.

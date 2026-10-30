@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { requireReview } from './core.mjs';
 import { generationBudget, TASK_TIMING } from './budget.mjs';
 import { collectEvidence } from './evidence.mjs';
-import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox } from './candidate.mjs';
+import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, recoveryVerificationEvidence } from './candidate.mjs';
 
 const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
 const start = source.indexOf('async function develop(');
@@ -41,7 +41,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     const context = {
       path, createHash, requireReview, generationBudget, TASK_TIMING, Date: elapsedClock ? ClockDate : Date,
       collectEvidence: async options => { advance(TASK_TIMING.artifactMs); return collectEvidence(options); }, safeEnv: extra => extra,
-      prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, runDir, runId: 'fixture', stateDir: dir,
+      prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, recoveryVerificationEvidence, runDir, runId: 'fixture', stateDir: dir,
       deadline: clockStart + runMinutes * 60_000, now: new Date(),
       config: { repositoryPath: dir }, policy: { repository: 'test/repo', protectedPaths: [], productDirection: {}, liveAiVerification: { enabled: resumeLiveFailure } },
       workspace: async () => dir, withWorkspace: async (dir, callback) => callback({}),
@@ -248,6 +248,16 @@ test('baseline interruption preserves the nested previous recovery plan checkpoi
   const run = await runScenario({ previous: true, previousRecoveryPlan: true, baseline: 'interrupted' });
   assert.match(run.error.message, /baseline failed/);
   assert.equal(run.checkpoint.plan.title, 'original approved context');
+});
+
+test('recovery prompt distinguishes current verification once without persisting source in the checkpoint', async () => {
+  const run = await runScenario({ previous: true });
+  assert.equal(run.error, undefined);
+  const prompt = run.calls.find(call => call[0] === 'plan')[1];
+  assert.equal(prompt.match(/CURRENT verification-script snapshot/g)?.length, 1);
+  assert.match(prompt, /logs are HISTORICAL/);
+  assert.equal(run.checkpoint.recovery.controllerVerification, undefined);
+  assert.doesNotMatch(JSON.stringify(run.checkpoint), /CURRENT verification-script snapshot|Verification scripts invoked/);
 });
 
 test('elapsed real develop repairs two missing-evidence attempts and completes third review/CI before retaining the same unmerged PR', async () => {

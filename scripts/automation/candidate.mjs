@@ -4,6 +4,27 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 const textExtensions = /\.(?:[cm]?[jt]sx?|json|mdx?|txt|html|css|scss|ya?ml|toml|xml|svg|sh|ps1|sql|prisma|env|csv)$/i;
 const issue = (file, line, reason, guidance) => ({ file, line, reason, guidance });
 
+/** Snapshot the committed scripts the controller invokes, not historical agent worktree copies. */
+export async function recoveryVerificationEvidence(repositoryPath, git) {
+  const files = ['scripts/automation/verify-live-chat-ui.mjs', 'scripts/automation/live-scenario.mjs'];
+  const sha = await git(['rev-parse', 'HEAD'], repositoryPath);
+  const snapshot = { scope: 'Verification scripts invoked from repositoryPath; not the installed runner module', sha, files: [] };
+  if (!/^[a-f0-9]{40,64}$/.test(sha) || await git(['status', '--porcelain', '--', ...files], repositoryPath)) return { ...snapshot, unavailable: 'Verification checkout is dirty or its revision is unverified.' };
+  for (const file of files) {
+    const entry = await git(['ls-tree', sha, '--', file], repositoryPath);
+    if (!/^100(?:644|755) blob [a-f0-9]{40,64}\t/.test(entry)) {
+      snapshot.files.push({ file, unavailable: 'Missing or not a regular committed source file.' }); continue;
+    }
+    const size = Number(await git(['cat-file', '-s', `${sha}:${file}`], repositoryPath));
+    if (!Number.isSafeInteger(size) || size < 0 || size > 16384) {
+      snapshot.files.push({ file, unavailable: 'Committed source exceeds the 16 KiB bound.' }); continue;
+    }
+    snapshot.files.push({ file, content: await git(['show', `${sha}:${file}`], repositoryPath) });
+  }
+  if (await git(['rev-parse', 'HEAD'], repositoryPath) !== sha || await git(['status', '--porcelain', '--', ...files], repositoryPath)) return { ...snapshot, files: [], unavailable: 'Verification checkout changed during snapshot.' };
+  return snapshot;
+}
+
 /** Only the first CLI launch header describes this process; tool output may quote older logs. */
 export function requireImplementationSandbox(stderr) {
   const header = /^OpenAI Codex v[^\r\n]+\r?\n--------\r?\n([\s\S]*?)\r?\n--------(?:\r?\n|$)/.exec(stderr.trimStart())?.[1];

@@ -56,10 +56,10 @@ async function fixture(run) {
     await git(['add', '.']); await git(['commit', '-m', 'current controller fix']);
     await git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
     await git(['worktree', 'add', '-b', 'auto/normal-recovery', fresh, 'main']);
-    const context = { config: { repositoryPath: main }, path, stateDir, runDir, readdir, lstat, readFile, writeFile, rm, randomBytes, git, changedPathsBlocked, policy: { protectedPaths: ['scripts/**'] }, json: async (file, fallback) => { try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; } } };
+    const context = { path, stateDir, runDir, readdir, lstat, readFile, writeFile, rm, randomBytes, git, changedPathsBlocked, policy: { protectedPaths: ['scripts/**'] }, json: async (file, fallback) => { try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; } } };
     const prepare = new AsyncFunction(...Object.keys(context), `${source.slice(start, end)}; return prepareRecovery;`);
     const prepareRecovery = await prepare(...Object.values(context));
-    await run({ root, main, original, fresh, calls, git, prepareRecovery, previous: { id: 'previous', dir: runDir, reason: 'failed', task: { branch, plan: { title: 'preserved approved plan' } } } });
+    await run({ root, original, fresh, calls, git, prepareRecovery, previous: { id: 'previous', dir: runDir, reason: 'failed', task: { branch, plan: { title: 'preserved approved plan' } } } });
     assert.deepEqual((await readdir(runDir)).filter(name => /\.index(?:\.lock)?$/.test(name)), []);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
@@ -122,18 +122,6 @@ test('interrupted baseline handoff uses the preserved original candidate branch'
   assert.equal(result.transferredPatch, true);
   assert.equal(result.branch, previous.task.branch);
   assert.equal((await readFile(path.join(fresh, 'docs/dirty.md'), 'utf8')).trim(), 'candidate dirty');
-}));
-
-test('recovery supplies current controller code rather than treating historical failure checks as current', async () => fixture(async ({ main, original, fresh, git, prepareRecovery, previous }) => {
-  await mkdir(path.join(main, 'scripts/automation'), { recursive: true });
-  await writeFile(path.join(main, 'scripts/automation/verify-live-chat-ui.mjs'), 'current confirmation checks');
-  await writeFile(path.join(main, 'scripts/automation/live-scenario.mjs'), 'future scenario date');
-  const result = await prepareRecovery({ ...previous, reason: 'historical /保存/ check failed' }, fresh);
-  assert.equal(result.controllerVerification.sha, await git(['rev-parse', 'HEAD'], main));
-  assert.deepEqual(result.controllerVerification.files.map(item => item.content), ['current confirmation checks', 'future scenario date']);
-  assert.equal(result.reason, 'historical /保存/ check failed');
-  assert.equal(result.transferredPatch, true);
-  assert.equal((await readFile(path.join(original, 'docs/dirty.md'), 'utf8')).trim(), 'candidate dirty');
 }));
 
 test('recovery rejects unsafe branch and protected candidate changes before apply', async () => fixture(async ({ original, fresh, calls, prepareRecovery, previous }) => {
