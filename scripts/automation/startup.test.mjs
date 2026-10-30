@@ -43,6 +43,25 @@ test('legacy resumed-live failure without attempt preserves PR and original evid
   assert.equal(await readFile(file, 'utf8'), original);
 }));
 
+test('authorized build repair re-enters development on the retained candidate', async () => scenario(async ({ add, launch }) => {
+  const task = { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-build', sha: 'a'.repeat(40) }, verdict: { verdict: 'approve', risk: 'reversible' } };
+  await add('2026-10-25-5', { status: 'awaiting-verification' }, task);
+  const first = await add('2026-10-25-13');
+  let repaired;
+  await launch(first, async (kind, { previous }) => { repaired = previous.task.sha; return { status: 'released', prevention: 'Regression coverage for fixture repair' }; }, undefined, [], { policy: { editableVerificationPaths: ['scripts/automation/verify-live-chat-ui.mjs'] } });
+  assert.equal(repaired, task.sha);
+}));
+
+test('fixture repair does not bypass exhausted attempts, publication or non-reversible review', async () => {
+  for (const changes of [{ verifierRepairAttempts: 3 }, { pr: 123 }, { stage: 'release' }, { kind: 'mutation' }, { verdict: { verdict: 'approve', risk: 'approval-required' } }, { liveFailure: { category: 'verification-build', sha: 'b'.repeat(40) } }]) {
+    await scenario(async ({ add, launch }) => {
+      await add('2026-10-25-5', { status: 'awaiting-verification' }, { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-build', sha: 'a'.repeat(40) }, verdict: { verdict: 'approve', risk: 'reversible' }, ...changes });
+      const current = await add('2026-10-25-13');
+      await assert.rejects(launch(current, () => assert.fail('must not generate'), async () => ({ status: 'awaiting-verification' }), [], { policy: { editableVerificationPaths: ['scripts/automation/verify-live-chat-ui.mjs'] } }), /unresolved|explicit owner approval/);
+    });
+  }
+});
+
 test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json }) => {
   const task = { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-unresolved' } };
   await add('2026-10-25-5', { status: 'awaiting-verification' }, task);

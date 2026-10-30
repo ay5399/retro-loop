@@ -5,7 +5,8 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { actionScenario } from './live-scenario.mjs';
-import { providerFailure, exhaustedWindow } from './live-verification.mjs';
+import { providerFailure, exhaustedWindow, boundedCompletion } from './live-verification.mjs';
+import { loadCandidateVerifier } from './verifier-loader.mjs';
 const home = process.env.RETRO_AUTOMATION_HOME;
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Live verification requires Node.js 24 or later, matching .nvmrc');
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
@@ -72,21 +73,23 @@ try {
     baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。\n' + ACTION_GUIDANCE });
   const { inputs, saved, date } = actionScenario();
   report.scenarioDate = date;
-  const complete = async (input, onDelta) => {
+  const { complete, assertComplete } = boundedCompletion({ inputs, signal: controller.signal, expiresAt, run: async (input, onDelta) => {
     const completed = new Promise((resolve, reject) => { active = { resolve, reject, onDelta, threadId: thread.thread.id, text: '', started: Date.now() }; });
     const start = rpc('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: input }] });
     const [, output] = await Promise.all([start, completed]);
     if (!output.text.trim()) throw new Error('Model returned no visible text');
     return output;
-  };
+  } });
   if (process.argv.includes('--browser')) {
     report.scope = 'Real AiChat and KptBoard UI; real Plus inference; synthetic persistence, no production DB';
     report.excluded = 'Production chat route, Gemini provider, authentication and PostgreSQL persistence are covered separately by mock CI, not this live fixture';
-    const { runBrowserProbe } = await import('./verify-live-chat-ui.mjs');
+    // Owner-authorized verifier changes are reviewed together with the candidate SHA.
+    const { runBrowserProbe } = await loadCandidateVerifier(installation.repositoryPath, sourceRoot);
     await runBrowserProbe({ complete, dir, report, inputs, saved, sourceRoot, signal: controller.signal, expiresAt });
   } else {
     for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }
+  assertComplete();
   report.status = 'passed';
 } catch (error) {
   report.status = 'failed'; report.reason = error.message; process.exitCode = 1;

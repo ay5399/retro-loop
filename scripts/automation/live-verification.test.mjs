@@ -142,6 +142,35 @@ test('read-only quota preflight waits for both exhausted windows and never assum
   assert.equal(liveRetryAllowed({ liveFailure: { category: 'provider-unavailable' }, liveVerificationRetries: 2 }), false);
 });
 
+test('owner-authorized fixture build errors allow repair; inference and unknown failures do not', async () => {
+  const sha = 'a'.repeat(40);
+  for (const [reason, inferenceFailed, enabled, allowed, extraReport = {}, extraTask = {}] of [
+    ['Build failed with 4 errors: synthetic bundle', false, true, true],
+    ['Build failed with 1 error: synthetic bundle', false, true, true],
+    ['Build failed with 4 errors: synthetic bundle', true, true, false],
+    ['Build failed with 4 errors: synthetic bundle', false, false, false],
+    ['assertion failed', false, true, false],
+    ['Build failed with 1 error: bundle', false, true, false, { failurePhase: 'preflight' }],
+    ['Build failed with 1 error: bundle', false, true, false, { providerFailure: { category: 'usage-limit' } }],
+    ['Build failed with 1 error: bundle', false, true, false, { sha: 'b'.repeat(40) }],
+    ['Build failed with 1 error: bundle', false, true, false, {}, { verifierRepairAttempts: 2 }],
+    ['Build failed with 1 error: bundle', false, true, false, {}, { pr: 123 }],
+    ['Build failed with 1 error: bundle', false, true, false, {}, { kind: 'mutation' }],
+    ['Build failed with 1 error: bundle', false, true, false, {}, { verdict: { verdict: 'approve', risk: 'approval-required' } }],
+  ]) {
+    const writes = [];
+    const fn = await load('verifyLiveCandidate', 'resumeLiveVerification', {
+      path, runDir: '/run', policy: { editableVerificationPaths: enabled ? ['scripts/automation/verify-live-chat-ui.mjs'] : [], liveAiVerification: { enabled: true } },
+      config: { repositoryPath: '/repo' }, stateDir: '/state', TASK_TIMING: { liveAiMs: 100 }, safeEnv: x => x,
+      save: async (file, value) => writes.push(value),
+      command: async () => { throw new Error('probe failed'); },
+      json: async () => ({ sha, reason, inferenceFailed, ...extraReport }),
+    });
+    await assert.rejects(fn('/candidate', sha, 'probe', { kind: 'normal', verdict: { verdict: 'approve', risk: 'reversible' }, ...extraTask }), error => Boolean(error.verificationBuildRepair) === allowed);
+    assert.equal(writes.at(-1).sha, sha);
+  }
+});
+
 test('actual live controller holds exact candidate on failed, corrupt or absent reports', async () => {
   for (const report of [null, { sha: 'a'.repeat(40), failurePhase: 'preflight', providerFailure: { category: 'usage-limit' } }, 'corrupt', { sha: 'b'.repeat(40), providerFailure: { category: 'provider-unavailable' } }, { sha: 'a'.repeat(40), providerFailure: { category: 'provider-unavailable' } }]) {
     const writes = [], task = { branch: 'auto/normal-retained', sha: 'a'.repeat(40), result: { title: 'same feature' }, verdict: { verdict: 'approve' } };

@@ -17,6 +17,7 @@ export function mutationDue(lastDate, now = new Date()) {
 export function policyHash(policy, stage = 'release') {
   // Product copy and scheduling do not change a provider's billing settings.
   const fields = ['repository', 'owner', 'monthlyLimitYen', 'operatingLimitYen', 'allowPaidUsage', 'githubAuth', 'requireDedicatedWindowsUser', 'services', 'protectedPaths'];
+  if (policy.editableVerificationPaths !== undefined) fields.push('editableVerificationPaths');
   return createHash('sha256').update(JSON.stringify({ stage, ...Object.fromEntries(fields.map(key => [key, policy[key]])) })).digest('hex');
 }
 export function auditProblems(policy, audit, now = new Date(), stage = 'release') {
@@ -65,6 +66,7 @@ export function approvalMatches(comments, owner, id, sha) {
 export function changedPathsBlocked(paths, policy) {
   return paths.filter(original => {
     const p = original.toLowerCase();
+    if (original === 'scripts/automation/verify-live-chat-ui.mjs' && policy.editableVerificationPaths?.includes(original)) return false;
     return !/^(src\/|public\/|e2e\/|docs\/|readme\.md$)/.test(p) || /(?:^|\/)(?:actions|route|middleware|proxy|instrumentation)\.[cm]?[jt]sx?$/.test(p) || ['src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/autonomous_improvement.md'].includes(p) || policy.protectedPaths.some(prefix => p.startsWith(prefix.toLowerCase()));
   });
 }

@@ -16,7 +16,7 @@ async function simulate(verdicts, failingChecks = 0) {
   let commits = 0, reviews = 0, checks = 0;
   const result = { title: 'test', sources: ['https://example.com'], screenshots: ['proof.png'], prevention: 'regression coverage' };
   const context = {
-    existingRelease: null,
+    existingRelease: null, checkpoint: {},
     taskTag: 'normal', recovery: null, baselineFailure: '', recordTask: async () => {},
     generationBudget, ciEstimateMs: 180_000, json: async (file, fallback) => file.endsWith('-ci.json') && failingChecks ? { status: 'failed' } : fallback,
     deadline: Date.now() + 90 * 60_000, result, plan: {}, dir: 'worktree', runDir: 'logs', kind: 'normal', branch: 'auto/test', policy: {}, baseInstruction: '',
@@ -62,7 +62,7 @@ test('plan must be approved after researched revisions before implementation', a
   let revisions = 0, reviews = 0;
   const plans = [];
   const context = {
-    existingRelease: null,
+    existingRelease: null, checkpoint: {},
     baselineFailure: '', recovery: null, taskTag: 'normal', recordTask: async () => {}, git: async () => '', dir: 'worktree', baseInstruction: 'research competitors and user problems', runDir: 'logs', kind: 'normal',
     generate: async prompt => { revisions++; assert.match(prompt, /PLANNING ONLY/); return { sources: ['https://example.com'], decision: 'implement', summary: `plan ${revisions}` }; },
     createHash: () => ({ update: value => ({ digest: () => value.length.toString(16).padStart(40, '0') }) }),
