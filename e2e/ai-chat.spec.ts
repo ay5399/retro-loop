@@ -7,6 +7,14 @@ import { loginAsDev, loginViaMagicLink } from "./helpers";
 // - 認可（未ログイン=401 / 非メンバー=403）は /api/chat を直叩きして確認する。
 const prisma = new PrismaClient();
 
+const MEMBER_EMAIL = "e2e-chat@example.com";
+const OUTSIDER_EMAIL = "e2e-chat-outsider@example.com";
+const OTHER_MEMBER_EMAIL = "e2e-chat-other-member@example.com";
+const TEAM_NAME = "E2Eチャットチーム";
+
+let teamId = "";
+let retroId = "";
+
 const DRAFT_GUARD_SUGGESTIONS = ["今回の総括をして", "前回からの積み残しを指摘して", "次に試すべきことは?"];
 
 async function mockDraftGuardChat(page: Page) {
@@ -46,7 +54,9 @@ test("編集した本人Problemの下書きを候補の誤送信から守る", a
   for (const name of DRAFT_GUARD_SUGGESTIONS) {
     const suggestion = page.getByRole("button", { name, exact: true });
     await expect(suggestion).toBeDisabled();
-    // Synthetic dispatch also exercises the handler guard behind disabled UI.
+    await expect(suggestion).toHaveAttribute("aria-describedby", "consultation-draft-guard");
+    // React may suppress this disabled click; this checks UI protection,
+    // not direct execution of submitSuggestion's defensive guard.
     await suggestion.dispatchEvent("click");
   }
   await expect(page.locator("#consultation-draft-guard")).toHaveText("入力中の相談文を守るため、候補は使えません。入力欄の送信から相談できます。");
@@ -95,14 +105,6 @@ test("空白と改行も候補から守り、完全消去すると候補を一�
   expect(payloads[0].messages[0].role).toBe("user");
   expect(payloads[0].messages[0].parts).toEqual([{ type: "text", text: DRAFT_GUARD_SUGGESTIONS[0] }]);
 });
-
-const MEMBER_EMAIL = "e2e-chat@example.com";
-const OUTSIDER_EMAIL = "e2e-chat-outsider@example.com";
-const OTHER_MEMBER_EMAIL = "e2e-chat-other-member@example.com";
-const TEAM_NAME = "E2Eチャットチーム";
-
-let teamId = "";
-let retroId = "";
 
 test.beforeAll(async () => {
   // 前回残骸の掃除
