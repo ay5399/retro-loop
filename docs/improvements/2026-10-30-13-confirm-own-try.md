@@ -1,5 +1,23 @@
 # 本人が決めた行動・日付を確認し、Try付箋として保存する
 
+## 2026-10-31 5時・修正1の再診断と証拠更新
+
+今回も同じ本人Try確認保存と検証修復だけを扱う。新機能は追加しない。以下は2026-10-31 JSTに読み取った履歴で、今回の実行結果ではない。
+
+- `normal-recovery-after-1-ci.json` はSHA `47ca0cc0bb916a6f6f6a3933eab66b91cc609ed7`、run `41121227305`、status `failed`、理由 `gh failed (1)`。対応する `normal-recovery-after-1-checks.log` は0バイト。dispatchはdiscoveredであり、実際の失敗ステップ・標準エラーは残っていない。https://github.com/ay5399/retro-loop/actions/runs/41121227305 は履歴JSONにある参照先で、今回Webから取得したCI結果ではない。実行基盤の取得障害とアプリ検証失敗を区別できず、CI成功とも現在の構文障害とも判定しない。
+- 現在の検証スクリプトは既にcwd基準のroot、SDK辞書型、二つの正確な参照元パスによるactions置換を持つ。`import.meta` と `fileURLToPath` はない。古い3950657の提示スナップショットを現在ソースとして修正し直す必要はない。今回、例外許可ファイルへの追加変更は不要と判断した。
+- 同SHAのClaude独立レビューは静的approve、controller検証のみの許可。未提示だったSDK解決後半、sourceDir、合成ストア、entry、addNoteを静的確認した。SDKはlockとのバージョン一致とrealpathを使い、sourceDirはsourceRootのrealpath配下。ストアキーは `retro-live-fixture`、保存イベントをentryが購読する。既存addNoteは本人認証とチーム所属を確認しauthorIdを設定する。これらの整合は実行成功の証明ではない。
+
+候補Aはgh失敗を推測してpackageやcontrollerを変更する案。原因証拠がなく保護対象でもあるため採用しない。候補Bは承認済みの収集修復を維持し、接続先の境界の回帰と証拠を補強して新SHAのcontroller検証へ渡す案。優先シナリオの確認保存を保ち、小さく可逆なのでBを選ぶ。残るgh障害の原因は未解明であり、保護制御の迂回は行わない。controllerで失敗ステップ・標準エラーを取得して判定する必要がある。
+
+`e2e/own-try-module-loading.spec.ts` に独立テストを追加した。静的importを維持し、許可された二つの実パスは合成ストアに一致する一方、別候補sourceDir、同じ末尾を持つ別候補ファイル、backup、入れ子パス、本番actionsを置換しないことを無条件に検査する。既存テスト本文・アサーションは削除・移動・再整形していない。既存のモック合成画面・本番経路シナリオと四枚のPNG生成は保持する。
+
+同SHAの `normal-recovery-live-ai-1.log` は2026-10-30T20:10:26.553Z、Plus/chatgpt、local-codex-app-server、gpt-6.1-sol、3往復、合成ブラウザー保存・再表示passedと報告している。初文字7788/2862/2309ms、完了9945/4544/4822ms。初回と二回目は本人が実行できる行動を質問し、三回目は本人指定の2026-11-07朝会後の行動を確認案へ整理し未保存と明記した。これは旧SHAの歴史的証拠であり、今回の修正後SHAの合格ではない。保存はTry欄への手動転記で、新確認フォームの実AI保存を証明しない。本番Geminiとのモデル差、本番API・認証・PostgreSQLが対象外という境界を維持する。MODULE_TYPELESS_PACKAGE_JSON警告は記録するが、ログはpassedであり停止原因とは確認できない。警告の提案に従って保護されたpackageを変更しない。
+
+2026-10-31に公式資料を再閲覧した。https://playwright.dev/docs/test-typescript は変換実行と型検査が別であること、https://nodejs.org/api/esm.html はimport.metaのESM境界、https://esbuild.github.io/plugins/#on-resolve はimporterを使う解決仕様を説明する。下記の競合二製品・Scrum.org・PagerDutyの調査は2026-10-30の引継ぎ記録で、今回再取得した利用者証拠ではない。競合の担当・期限・確認機能と実践者の未完了アクション問題は方向性の根拠であり、RetroLoopでの効果測定ではない。
+
+今回実施したのは静的読取とファイル変更のみ。アプリ・SDK・テスト・型検査・ビルド・PNG生成・実AIをホストで実行していない。新SHAの独立レビューとcontrollerでの収集・型検査・ビルド・モック回帰・四枚のPNG生成、および限定実AIの別工程を要する。CI障害は未解決として報告し、合格・マージ・デプロイ可能とは判定しない。構造化期限、元Problem関連、未着手／完了、応答喪失後の重複、文字数上限、二件目入力は引き続き制約であり、週次では暫定Try導線の有用性と専用Actionへの移行を判断する。
+
 ## 2026-10-31 5時の収集エラー修復
 
 最新の提示履歴は2026-10-30 12:23 UTC、SHA 6801a93ef804c0a4554bda3fd6637e3de3841cd9で、own-try-fixture.spec.tsによる検証ヘルパーの読込時に `Cannot use 'import.meta' outside a module` が発生したという記録。現在ソースでは厳密なactions置換・SDK辞書型・outputFiles確認は既に存在し、import.meta.urlだけが残っていた。提示スナップショットとも比較した。これは静的な一致であり、現在の実行再現ではない。添付画面でも相談後の専用保存導線は見られず、引継ぎの本人Try確認保存と検証修復を一件として保持する。

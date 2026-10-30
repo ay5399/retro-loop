@@ -25,3 +25,21 @@ test("検証ヘルパーを収集でき、既定ルートがリポジトリー�
     expect(resolveFixtureActions(path.join(sourceDir, "other", component), sourceDir)).toBeUndefined();
   }
 });
+
+test("合成actionsの接続は指定候補の二つの実パスだけを許可する", async () => {
+  const root = await realpath(".");
+  const sourceDir = path.join(root, "src");
+  const retroPath = "app/teams/[teamId]/retros/[retroId]";
+  const otherSourceDir = path.join(root, "other-candidate", "src");
+  for (const component of ["kpt-board.client.tsx", "own-try-confirmation.tsx"]) {
+    const importer = path.join(sourceDir, retroPath, component);
+    expect(resolveFixtureActions(importer, sourceDir)).toEqual({
+      path: path.join(root, "scripts/automation/live-ui-store.ts"),
+    });
+    expect(resolveFixtureActions(importer, otherSourceDir)).toBeUndefined();
+    expect(resolveFixtureActions(path.join(otherSourceDir, retroPath, component), sourceDir)).toBeUndefined();
+    expect(resolveFixtureActions(`${importer}.backup`, sourceDir)).toBeUndefined();
+    expect(resolveFixtureActions(path.join(sourceDir, "nested", retroPath, component), sourceDir)).toBeUndefined();
+  }
+  expect(resolveFixtureActions(path.join(sourceDir, retroPath, "actions.ts"), sourceDir)).toBeUndefined();
+});
