@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
+import { useFormStatus } from "react-dom";
 import {
   DndContext,
   DragOverlay,
@@ -584,18 +585,37 @@ function Lane({
       </SortableContext>
 
       <form action={add} className="flex flex-col gap-2">
-        <textarea
-          name="content"
-          required
-          rows={2}
-          placeholder={`${column.label} を追加`}
-          className="field"
-        />
-        <button type="submit" className="btn btn-ghost btn-sm self-start">
-          ＋ 追加
-        </button>
+        <AddNoteFields label={column.label} />
       </form>
     </section>
+  );
+}
+
+// useFormStatus は親フォームの状態を読むため、フォーム内の子で使用する。
+function AddNoteFields({ label }: { label: string }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <>
+      <textarea
+        name="content"
+        required
+        rows={2}
+        placeholder={`${label} を追加`}
+        disabled={pending}
+        className="field"
+      />
+      <button
+        type="submit"
+        disabled={pending}
+        className="btn btn-ghost btn-sm self-start disabled:cursor-wait disabled:opacity-60"
+      >
+        {pending ? "保存中…" : "＋ 追加"}
+      </button>
+      <p role="status" className="text-xs text-muted">
+        {pending ? `${label}の付箋を保存しています。` : ""}
+      </p>
+    </>
   );
 }
 
