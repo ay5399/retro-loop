@@ -7,7 +7,7 @@ import { auditProblems, slot, jstDate, mutationDue, changedPathsBlocked, require
 import { createAppAuth } from './github-app.mjs';
 import { dispatchWorkflow } from './workflow.mjs';
 import { collectEvidence } from './evidence.mjs';
-import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid } from './candidate.mjs';
+import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox } from './candidate.mjs';
 import { inspectPreviousRun, reconcileStartup } from './history.mjs';
 import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';
 
@@ -40,7 +40,7 @@ function safeEnv(extra = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(TOKEN|SECRET|API_KEY|GIT_CONFIG_|GIT_INDEX_FILE|GH_CONFIG_DIR|DATABASE_URL|DIRECT_URL|RESEND|VERTEX|AWS_|AZURE_|GOOGLE_APPLICATION_CREDENTIALS|CLAUDE_CODE_USE_|ANTHROPIC_|OPENAI_)/i.test(key)));
   return { ...env, GEMINI_API_KEY: '', ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '', AUTH_RESEND_KEY: '', GOOGLE_GENERATIVE_AI_API_KEY: '', ALLOW_LIVE_LLM: 'false', ALLOW_LIVE_EMAIL: 'false', AUTOMATION_TEST: '1', LLM_PROVIDER: 'mock', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', ...extra };
 }
-async function command(name, args, { cwd = config.repositoryPath, env = process.env, input, timeout = 300_000, log } = {}) {
+async function command(name, args, { cwd = config.repositoryPath, env = process.env, input, timeout = 300_000, log, stderrLog } = {}) {
   const tool = config.commands[name];
   if (!tool) throw new Error(`Unconfigured executable: ${name}`);
   const remaining = Math.min(timeout, deadline - Date.now());
@@ -61,6 +61,7 @@ async function command(name, args, { cwd = config.repositoryPath, env = process.
     child.on('close', async code => {
       clearTimeout(timer);
       if (log) await writeFile(log, stdout + '\n' + stderr);
+      if (stderrLog) await writeFile(stderrLog, stderr);
       if (code !== 0 || timedOut) reject(new Error(`${name} failed (${timedOut ? 'timeout' : code}). ${log ? `See ${log}` : stderr.slice(-1000)}`));
       else resolve((stdout || (name === 'codex' && args[0] === 'login' ? stderr : '')).trimEnd());
     });
@@ -546,10 +547,10 @@ async function develop(kind, { previous, existingRelease } = {}) {
     async function generate(instruction, stage) {
       const { timeoutMs } = generationBudget({ deadline, now: Date.now(), mode: kind === 'mutation' ? 'mutation' : 'normal', stage: stage.startsWith('plan-') ? 'planning' : stage.startsWith('fix-') || stage === 'implementation-resumed-release' ? 'fix' : 'implementation', ciMs: ciEstimateMs });
       await command('codex', ['--search', '-a', 'never', 'exec', '--ignore-user-config', '-c', 'windows.sandbox="elevated"', '--sandbox', stage.startsWith('plan-') ? 'read-only' : 'workspace-write', ...images, '--output-schema', path.join(stateDir, stage.startsWith('plan-') ? 'plan.schema.json' : 'result.schema.json'), '--output-last-message', output, '-C', dir, '-'], {
-        cwd: dir, env, input: instruction, timeout: timeoutMs, log: path.join(runDir, `${taskTag}-${stage}-codex.log`),
+        cwd: dir, env, input: instruction, timeout: timeoutMs, log: path.join(runDir, `${taskTag}-${stage}-codex.log`), stderrLog: path.join(runDir, `${taskTag}-${stage}-codex-stderr.log`),
       });
-      const executionLog = await readFile(path.join(runDir, `${taskTag}-${stage}-codex.log`), 'utf8');
-      if (!stage.startsWith('plan-') && /^sandbox: read-only\s*$/m.test(executionLog)) throw new Error('Codex workspace-write sandbox was not activated; implementation was not attempted');
+      const executionLog = await readFile(path.join(runDir, `${taskTag}-${stage}-codex-stderr.log`), 'utf8');
+      if (!stage.startsWith('plan-')) requireImplementationSandbox(executionLog);
       if (await readFile(path.join(dir, '.git'), 'utf8') !== gitMetadata) throw new Error('Worktree Git metadata changed');
       const generated = await json(output);
       const { unlink } = await import('node:fs/promises');

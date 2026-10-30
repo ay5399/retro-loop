@@ -4,6 +4,16 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 const textExtensions = /\.(?:[cm]?[jt]sx?|json|mdx?|txt|html|css|scss|ya?ml|toml|xml|svg|sh|ps1|sql|prisma|env|csv)$/i;
 const issue = (file, line, reason, guidance) => ({ file, line, reason, guidance });
 
+/** Only the first CLI launch header describes this process; tool output may quote older logs. */
+export function requireImplementationSandbox(stderr) {
+  const header = /^OpenAI Codex v[^\r\n]+\r?\n--------\r?\n([\s\S]*?)\r?\n--------(?:\r?\n|$)/.exec(stderr.trimStart())?.[1];
+  const modes = header ? [...header.matchAll(/^sandbox: ([^\r\n]+)\r?$/gm)].map(match => match[1].trim()) : [];
+  if (modes.length !== 1 || !/^workspace-write(?: \[[^\r\n]*\])?$/.test(modes[0])) {
+    throw new Error(`Codex implementation launch sandbox is ${modes.length === 1 ? modes[0] : 'unverified'}; verification stopped. Inspect the stderr launch header, not quoted tool output.`);
+  }
+  return modes[0];
+}
+
 function diffHeaderPath(raw) {
   // Git appends a delimiter tab when a path contains spaces. Literal filename
   // tabs are C-escaped inside quotes, so this delimiter is never path content.

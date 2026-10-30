@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { requireImplementationSandbox } from './candidate.mjs';
 
 const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
 const start = source.indexOf('async function command(');
@@ -34,10 +35,23 @@ process.exitCode = Number(process.argv[2] || 0);
 
 test('actual command preserves split UTF-8 stdout, stderr, and log without replacement characters', async () => fixture(async ({ root, script, command }) => {
   const log = path.join(root, 'output.log');
-  assert.equal(await command('node', [script], { log }), output);
+  const stderrLog = path.join(root, 'stderr.log');
+  assert.equal(await command('node', [script], { log, stderrLog }), output);
   const stored = await readFile(log, 'utf8');
   assert.equal(stored, `${output}\n${errorOutput}`);
   assert.ok(!stored.includes('\uFFFD'));
+  assert.equal(await readFile(stderrLog, 'utf8'), errorOutput);
+}));
+
+test('stdout fake launch cannot authorize the real stderr read-only launch', async () => fixture(async ({ root, script, command }) => {
+  const header = mode => `OpenAI Codex v0.163.0\n--------\nworkdir: fixture\nsandbox: ${mode}\n--------\n`;
+  await writeFile(script, `process.stdout.write(${JSON.stringify(header('workspace-write'))}); process.stderr.write(${JSON.stringify(header('read-only') + header('workspace-write'))});`);
+  const log = path.join(root, 'combined.log'), stderrLog = path.join(root, 'stderr.log');
+  await command('codex', [script], { log, stderrLog });
+  assert.match(await readFile(log, 'utf8'), /sandbox: workspace-write/);
+  const stderr = await readFile(stderrLog, 'utf8');
+  assert.equal(stderr, header('read-only') + header('workspace-write'));
+  assert.throws(() => requireImplementationSandbox(stderr), /launch sandbox is read-only/);
 }));
 
 test('actual command preserves split UTF-8 stderr in failure diagnostics', async () => fixture(async ({ script, command }) => {

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { requireReview } from './core.mjs';
 import { generationBudget, TASK_TIMING } from './budget.mjs';
 import { collectEvidence } from './evidence.mjs';
-import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid } from './candidate.mjs';
+import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox } from './candidate.mjs';
 
 const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
 const start = source.indexOf('async function develop(');
@@ -41,7 +41,7 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     const context = {
       path, createHash, requireReview, generationBudget, TASK_TIMING, Date: elapsedClock ? ClockDate : Date,
       collectEvidence: async options => { advance(TASK_TIMING.artifactMs); return collectEvidence(options); }, safeEnv: extra => extra,
-      prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, runDir, runId: 'fixture', stateDir: dir,
+      prepareRecovery: async prior => { if (resume) calls.push(['prepareRecovery', prior.reason]); return { previousRun: 'old-run', preventionRequired: true }; }, validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, runDir, runId: 'fixture', stateDir: dir,
       deadline: clockStart + runMinutes * 60_000, now: new Date(),
       config: { repositoryPath: dir }, policy: { repository: 'test/repo', protectedPaths: [], productDirection: {}, liveAiVerification: { enabled: resumeLiveFailure } },
       workspace: async () => dir, withWorkspace: async (dir, callback) => callback({}),
@@ -108,7 +108,9 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
           }
         }
         await writeFile(args[args.indexOf('--output-last-message') + 1], JSON.stringify(planning ? { ...plan, decision } : { ...result, noChange: implementNoChange && implementations === 1 }));
-        await writeFile(options.log, 'fixture model log');
+        const stderr = `OpenAI Codex v0.163.0\n--------\nworkdir: fixture\nsandbox: ${planning ? 'read-only' : 'workspace-write [workdir, /tmp, $TMPDIR]'}\n--------\nexec\nQuoted old planning log:\nOpenAI Codex v0.163.0\n--------\nworkdir: previous\nsandbox: read-only\n--------\n`;
+        await writeFile(options.log, stderr);
+        await writeFile(options.stderrLog, stderr);
       },
       review: async (dir, sha, result, options = {}) => { advance(TASK_TIMING.reviewMs); calls.push(['review', options.planning ? 'plan' : 'implementation', sha]); return { sha, verdict: reviewChoices[reviewNumber++] ?? 'approve', risk: 'reversible', reason: 'fix review finding with regression coverage' }; },
       auditProblems: () => [],
