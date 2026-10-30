@@ -5,6 +5,16 @@ import path from "node:path";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { fixtureSdkAliases, resolveFixtureActions } from "../scripts/automation/verify-live-chat-ui.mjs";
 
+test("合成SDKエイリアスが文字列の解決先を返す", async () => {
+  const aliases: Record<string, string> = await fixtureSdkAliases(await realpath("."));
+  expect(Object.keys(aliases).sort()).toEqual(["@ai-sdk/react", "ai"]);
+  for (const name of ["ai", "@ai-sdk/react"]) {
+    expect(typeof aliases[name]).toBe("string");
+    expect(path.isAbsolute(aliases[name])).toBe(true);
+    expect(await realpath(aliases[name])).toBe(aliases[name]);
+  }
+});
+
 test("合成画面がサーバー依存なしで本人Tryを確認・修正・保存し再表示する", async ({ page, baseURL }) => {
   const root = await realpath(".");
   const sourceDir = path.join(root, "src");
@@ -32,6 +42,11 @@ test("合成画面がサーバー依存なしで本人Tryを確認・修正・�
   expect(inputs.some(file => file.endsWith("/own-try-confirmation.tsx"))).toBe(true);
   expect(inputs.some(file => file.endsWith("/live-ui-store.ts"))).toBe(true);
   expect(inputs.filter(file => /(?:\/actions\.ts$|\/auth\.ts$|prisma|next-auth)/i.test(file))).toEqual([]);
+  // Fail before serving the page if write:false did not produce its browser bundle.
+  if (!bundle.outputFiles?.length) throw new Error("Synthetic browser bundle output is missing");
+  const browserBundle = bundle.outputFiles;
+  expect(browserBundle).toHaveLength(1);
+  expect(browserBundle[0].text.length).toBeGreaterThan(0);
 
   // Reuse the configured loopback baseURL; every request is intercepted.
   // Only the fixture document, bundle and mock chat may receive responses.
@@ -45,7 +60,7 @@ test("合成画面がサーバー依存なしで本人Tryを確認・修正・�
       return route.fulfill({ contentType: "text/html; charset=utf-8", body: '<!doctype html><html lang="ja"><meta charset="utf-8"><body><div id="root"></div><script src="/app.js"></script></body></html>' });
     }
     if (url === `${origin}/app.js` && request.method() === "GET") {
-      return route.fulfill({ contentType: "text/javascript", body: bundle.outputFiles[0].text });
+      return route.fulfill({ contentType: "text/javascript", body: browserBundle[0].text });
     }
     if (url === `${origin}/api/chat` && request.method() === "POST") {
       calls++;

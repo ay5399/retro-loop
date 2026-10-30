@@ -10,6 +10,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 export async function fixtureSdkAliases(repositoryRoot = root) {
   const installed = createRequire(path.join(repositoryRoot, 'package.json'));
   const lock = JSON.parse(await readFile(path.join(repositoryRoot, 'package-lock.json'), 'utf8'));
+  /** @type {Record<string, string>} */
   const aliases = {};
   for (const name of ['ai', '@ai-sdk/react']) {
     const metadata = JSON.parse(await readFile(installed.resolve(`${name}/package.json`), 'utf8'));
