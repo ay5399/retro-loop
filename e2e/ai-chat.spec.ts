@@ -88,7 +88,7 @@ for (const partial of [false, true]) {
     await stop.click();
     await expect(input).toBeEnabled();
     await expect(input).toHaveValue(draft);
-    await expect(page.getByRole("status")).toContainText("応答を中止しました。");
+    await expect(page.locator("[data-ai-chat]").getByRole("status")).toContainText("応答を中止しました。");
     await expect(stop).toHaveCount(0);
     if (partial) {
       await expect(page.locator("[data-ai-chat] li.justify-start").last()).toContainText("未完了の応答です。");
