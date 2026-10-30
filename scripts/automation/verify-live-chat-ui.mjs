@@ -38,6 +38,14 @@ export function createFixtureChatStream({ complete, input, report }) {
   } });
 }
 
+// Bounded wording checks, not a general semantic evaluation of arbitrary AI replies.
+// ACTION_GUIDANCE requires a confirmation and a manual Try instruction, not the literal word 保存.
+export function assertConfirmationReply(text) {
+  expect(text).toMatch(/確認|保存前|未保存|下書き|案/);
+  expect(text).toMatch(/(?:Try|トライ)付箋[\s\S]{0,48}(?:追加|登録)/i);
+  expect(text).not.toMatch(/(?:保存|追加|登録)(?:しました|済み|(?:が|は)完了|して(?:います|あります|おきました|おいた))/);
+}
+
 export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoot = root, signal, expiresAt = Date.now() + 330_000 }) {
   const localRequire = createRequire(path.join(root, 'package.json'));
   const { build } = localRequire('esbuild');
@@ -110,7 +118,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, sourceRoo
       expect((await replies.last().innerText()).trim().length).toBeGreaterThan(10);
     }
     expect(report.transcripts[0].text).not.toMatch(/15時|当番/);
-    expect(report.transcripts[2].text).toMatch(/保存/);
+    assertConfirmationReply(report.transcripts[2].text);
     const saved = '担当：私／日付：2026-10-26 朝会後／行動：自分のPRにレビュー希望時刻を記載し、チームへ共有する';
     const lane = page.locator('[data-lane="TRY"]');
     await lane.getByPlaceholder('Try を追加').fill(saved);
