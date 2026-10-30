@@ -108,7 +108,9 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
           }
         }
         await writeFile(args[args.indexOf('--output-last-message') + 1], JSON.stringify(planning ? { ...plan, decision } : { ...result, noChange: implementNoChange && implementations === 1 }));
-        await writeFile(options.log, `OpenAI Codex v0.163.0\n--------\nworkdir: fixture\nsandbox: ${planning ? 'read-only' : 'workspace-write [workdir, /tmp, $TMPDIR]'}\n--------\nexec\nQuoted old planning log:\nsandbox: read-only\n`);
+        const stderr = `OpenAI Codex v0.163.0\n--------\nworkdir: fixture\nsandbox: ${planning ? 'read-only' : 'workspace-write [workdir, /tmp, $TMPDIR]'}\n--------\nexec\nQuoted old planning log:\nOpenAI Codex v0.163.0\n--------\nworkdir: previous\nsandbox: read-only\n--------\n`;
+        await writeFile(options.log, stderr);
+        await writeFile(options.stderrLog, stderr);
       },
       review: async (dir, sha, result, options = {}) => { advance(TASK_TIMING.reviewMs); calls.push(['review', options.planning ? 'plan' : 'implementation', sha]); return { sha, verdict: reviewChoices[reviewNumber++] ?? 'approve', risk: 'reversible', reason: 'fix review finding with regression coverage' }; },
       auditProblems: () => [],
