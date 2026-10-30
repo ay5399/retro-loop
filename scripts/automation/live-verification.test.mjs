@@ -152,11 +152,12 @@ test('actual live controller holds exact candidate on failed, corrupt or absent 
       save: async (file, value) => writes.push({ file, value }),
     });
     await assert.rejects(fn('/candidate', task.sha, 'probe', task), error => error.liveVerificationBlocked === true);
-    assert.equal(writes.length, 1);
+    assert.equal(writes.length, 2);
+    assert.equal(writes[0].value.retainedVerification, true);
     assert.equal(writes[0].value.stage, 'live-ai-blocked');
     assert.equal(writes[0].value.sha, task.sha);
     assert.deepEqual(writes[0].value.result, task.result);
-    assert.equal(writes[0].value.liveFailure.category, report?.sha === task.sha && report?.failurePhase === 'preflight' ? 'usage-limit' : 'verification-unresolved');
+    assert.equal(writes.at(-1).value.liveFailure.category, report?.sha === task.sha && report?.failurePhase === 'preflight' ? 'usage-limit' : 'verification-unresolved');
   }
 });
 
@@ -166,4 +167,24 @@ test('actual resume holds an undiagnosed candidate without worktree, model, CI o
   const outcome = await fn({ id: 'previous', task });
   assert.equal(outcome.status, 'awaiting-verification');
   assert.equal(writes[0].sha, task.sha);
+});
+
+test('checkpoint is durable while probe is in flight before any probe result exists', async () => {
+  const writes = [];
+  let interrupt;
+  const fn = await load('verifyLiveCandidate', 'resumeLiveVerification', {
+    path, runDir: '/run', stateDir: '/state', config: { repositoryPath: '/repo' }, policy: { liveAiVerification: { enabled: true } }, TASK_TIMING: { liveAiMs: 100 }, safeEnv: x => x,
+    save: async (file, value) => writes.push(value),
+    command: () => new Promise((_, reject) => { interrupt = reject; }),
+    json: async () => ({}),
+  });
+  const pending = fn('/candidate', 'a'.repeat(40), 'probe', { branch: 'auto/normal-retained', result: { title: 'same candidate' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].stage, 'live-ai-blocked');
+  assert.equal(writes[0].retainedVerification, true);
+  assert.equal(writes[0].result.title, 'same candidate');
+  assert.equal(liveRetryAllowed(writes[0]), false);
+  interrupt(new Error('synthetic process loss'));
+  await assert.rejects(pending, error => error.liveVerificationBlocked === true);
 });

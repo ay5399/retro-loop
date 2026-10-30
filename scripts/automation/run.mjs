@@ -149,6 +149,8 @@ async function reconcileUncertainTask(previous) {
 }
 async function verifyLiveCandidate(dir, sha, tag, task) {
   const outputDir = path.join(runDir, tag);
+  // Persist before spawning: power loss/kill may skip every catch/finally block.
+  await save(path.join(runDir, 'task.json'), { ...task, sha, retainedVerification: true, stage: 'live-ai-blocked', liveFailure: { category: 'verification-unresolved' } });
   try {
     if (policy.liveAiVerification?.enabled !== true) throw new Error('Required live verification is disabled');
     await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--expected-sha', sha, '--output-dir', outputDir], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: TASK_TIMING.liveAiMs, log: path.join(runDir, `${tag}.log`) });
