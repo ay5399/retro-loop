@@ -167,8 +167,8 @@ async function verifyLiveCandidate(dir, sha, tag, task) {
 // Continue verification of a retained candidate. This function cannot generate code.
 async function resumeLiveVerification(previous) {
   let task = { ...previous.task, retainedVerification: true };
-  const hold = async reason => {
-    await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', reason });
+  const hold = async (reason, liveFailure = { category: 'verification-unresolved' }) => {
+    await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', liveFailure, reason });
     return { status: 'awaiting-verification', reason };
   };
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Uncertain production state must be verified before retained verification resumes.');
@@ -177,9 +177,13 @@ async function resumeLiveVerification(previous) {
     await save(path.join(runDir, 'task.json'), task);
     return { status: 'awaiting-release-conditions', problems: releaseProblems };
   }
-  if (!liveRetryAllowed(task, { manual: ['--retry-live-verification', '--recover-only', '--manual-run'].every(flag => process.argv.includes(flag)) })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.');
+  if (!liveRetryAllowed(task, { manual: ['--retry-live-verification', '--recover-only', '--manual-run'].every(flag => process.argv.includes(flag)) })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.', task.liveFailure);
   if (task.kind !== 'normal') return hold('Isolated mutation candidate requires diagnosis; never route it into ordinary publication.');
   if (!/^auto\/normal-[a-z0-9-]+$/i.test(task.branch ?? '') || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !task.result) return hold('Invalid retained live-verification identity.');
+  // Any new interruption needs diagnosis unless this probe actually fails with a
+  // newly classified provider error. Never reuse a stale transient diagnosis.
+  task = { ...task, liveFailure: { category: 'verification-unresolved' } };
+  await save(path.join(runDir, 'task.json'), task);
   if (task.pr) {
     task = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1 };
     await save(path.join(runDir, 'task.json'), task);
@@ -206,7 +210,8 @@ async function resumeLiveVerification(previous) {
     }
     const files = (await git(['diff', 'origin/main...HEAD', '--name-only', '-z'], dir)).split('\0').filter(Boolean);
     if (!files.length || changedPathsBlocked(files, policy).length) return hold('Retained candidate has no allowed diff.');
-    assertCandidateValid([...(await validateCandidateTextFiles(dir, files)), ...validateCandidateDiff(await git(['diff', 'origin/main...HEAD'], dir))]);
+    try { assertCandidateValid([...(await validateCandidateTextFiles(dir, files)), ...validateCandidateDiff(await git(['diff', 'origin/main...HEAD'], dir))]); }
+    catch (error) { return hold(`Retained candidate validation needs diagnosis: ${error.message}`); }
     if (task.verdict?.verdict !== 'approve' || task.verdict.sha !== task.sha) return hold('Retained candidate review is not approved; diagnosis required.');
     requireReview(task.verdict, task.sha);
     if (task.result.risk !== 'reversible' || task.verdict.risk !== 'reversible') return hold('Retained candidate requires owner approval.');

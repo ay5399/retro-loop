@@ -57,7 +57,7 @@ test('PR retries stop after two launches; mutation never reaches publication', a
   const fn = await load('resumeLiveVerification', 'main', {
     path, runDir: '/run', process: { argv: [] }, liveRetryAllowed,
     save: async (file, value) => { task = value; },
-    resumePendingRelease: async previous => { attempts++; assert.equal(previous.task.liveVerificationRetries, attempts); return { status: 'awaiting-verification' }; },
+    resumePendingRelease: async previous => { attempts++; assert.equal(previous.task.liveVerificationRetries, attempts); task = { ...previous.task, liveFailure: { category: 'provider-unavailable' } }; return { status: 'awaiting-verification' }; },
   });
   for (let i = 0; i < 3; i++) assert.equal((await fn({ task })).status, 'awaiting-verification');
   assert.equal(attempts, 2);
@@ -93,6 +93,29 @@ test('provider diagnostics distinguish quota and transport without storing upstr
   assert.equal(providerFailure({ codexErrorInfo: { HttpConnectionFailed: { httpStatusCode: 503 } } }).category, 'provider-unavailable');
   assert.equal(providerFailure({ codexErrorInfo: 'ResponseStreamDisconnected' }).category, 'provider-unavailable');
   assert.deepEqual(providerFailure({ message: 'unknown private diagnostics' }), { category: 'verification-unresolved' });
+});
+
+test('rebase conflict and remote divergence erase stale transient retry eligibility', async () => {
+  for (const failure of ['conflict', 'remote']) {
+    const sha = 'a'.repeat(40), writes = [];
+    const fn = await load('resumeLiveVerification', 'main', {
+      path, runDir: '/run', process: { argv: [] }, liveRetryAllowed,
+      save: async (file, value) => writes.push(value), workspace: async () => '/candidate', withWorkspace: async (dir, callback) => callback(),
+      git: async args => {
+        if (args[0] === 'rebase' && args[1] !== '--abort' && failure === 'conflict') throw new Error('synthetic conflict');
+        if (args[0] === 'rev-parse') return sha;
+        if (args.includes('--name-only')) return 'src/component.tsx';
+        if (args[0] === 'ls-remote') return 'f'.repeat(40);
+        if (args[0] === 'push') assert.fail('must not push divergent branch');
+        return '';
+      },
+      changedPathsBlocked: () => [], validateCandidateTextFiles: async () => [], validateCandidateDiff: () => [], assertCandidateValid: () => {}, requireReview: () => {}, verifyLiveCandidate: async () => {},
+    });
+    const outcome = await fn({ task: { kind: 'normal', branch: 'auto/normal-retained', sha, liveFailure: { category: 'provider-unavailable' }, result: { risk: 'reversible' }, verdict: { sha, verdict: 'approve', risk: 'reversible' } } });
+    assert.equal(outcome.status, 'awaiting-verification');
+    assert.equal(writes.at(-1).liveFailure.category, 'verification-unresolved');
+    assert.equal(liveRetryAllowed(writes.at(-1)), false);
+  }
 });
 
 test('read-only quota preflight waits for both exhausted windows and never assumes a missing reset', () => {
