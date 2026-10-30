@@ -9,6 +9,7 @@
   "operatingLimitYen": 800,
   "allowPaidUsage": false,
   "startupRecovery": { "enabled": true, "temporary": true },
+  "editableVerificationPaths": ["scripts/automation/verify-live-chat-ui.mjs"],
   "requireDedicatedWindowsUser": false,
   "githubAuth": "app",
   "liveAiVerification": { "enabled": true, "maxTurns": 3, "timeoutSeconds": 330, "loopbackOnly": true },

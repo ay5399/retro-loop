@@ -88,3 +88,14 @@ test('autonomous edits cannot change policy, authentication, migrations or workf
   assert.equal(changedPathsBlocked(['CLAUDE.md', 'src/instrumentation.ts', 'src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/AUTONOMOUS_IMPROVEMENT.md'], policy).length, 5);
   assert.equal(changedPathsBlocked(['lib/external.ts'], policy).length, 1);
 });
+
+test('owner exception grants exactly the live UI verifier and participates in the audited policy', () => {
+  const verifier = 'scripts/automation/verify-live-chat-ui.mjs';
+  assert.deepEqual(changedPathsBlocked([verifier], policy), []);
+  const disabled = { ...policy, editableVerificationPaths: [] };
+  assert.deepEqual(changedPathsBlocked([verifier], disabled), [verifier]);
+  for (const file of ['scripts/automation/run.mjs', 'scripts/automation/core.mjs', 'scripts/automation/probe-codex-ai.mjs', `${verifier}/../run.mjs`, verifier.toUpperCase()]) {
+    assert.deepEqual(changedPathsBlocked([file], policy), [file]);
+  }
+  assert.notEqual(policyHash(policy), policyHash(disabled));
+});
