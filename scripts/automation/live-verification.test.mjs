@@ -33,8 +33,23 @@ test('retained verification publishes the reviewed SHA without research or gener
   assert.deepEqual(calls.filter(call => ['live', 'ci', 'pr-create', 'release'].includes(call)), ['live', 'ci', 'pr-create', 'release']);
 });
 function load(name, next, context) {
-  return new AsyncFunction(...Object.keys(context), source.slice(source.indexOf(`async function ${name}(`), source.indexOf(`async function ${next}(`)) + `; return ${name};`)(...Object.values(context));
+  const dependencies = { stateDir: '/state', json: async () => null, auditProblems: () => [], policy: {}, ...context };
+  return new AsyncFunction(...Object.keys(dependencies), source.slice(source.indexOf(`async function ${name}(`), source.indexOf(`async function ${next}(`)) + `; return ${name};`)(...Object.values(dependencies));
 }
+
+test('halt and release-audit problems stop retained verification before any work or inference', async () => {
+  for (const halt of [true, false]) {
+    const writes = [];
+    const fn = await load('resumeLiveVerification', 'main', {
+      path, runDir: '/run', json: async file => file.endsWith('halt.json') ? halt ? { reason: 'uncertain release' } : null : {},
+      auditProblems: () => ['unverified release audit'], save: async (file, value) => writes.push(value),
+      workspace: () => assert.fail('No worktree, model, push, CI or release is allowed'),
+    });
+    const promise = fn({ task: { sha: 'a'.repeat(40) } });
+    if (halt) await assert.rejects(promise, /Uncertain production/);
+    else { assert.equal((await promise).status, 'awaiting-release-conditions'); assert.equal(writes[0].sha, 'a'.repeat(40)); }
+  }
+});
 
 test('PR retries stop after two launches; mutation never reaches publication', async () => {
   let task = { kind: 'normal', pr: 1, branch: 'auto/normal-retained', sha: 'a'.repeat(40), result: {}, liveFailure: { category: 'provider-unavailable' } };

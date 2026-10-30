@@ -18,7 +18,7 @@ test('three startups preserve live-blocked SHA without entering planning', async
   await add('2026-10-25-5', { status: 'awaiting-verification' }, task);
   for (const id of ['2026-10-25-13', '2026-10-25-21', '2026-10-26-5']) {
     const runDir = await add(id);
-    await assert.rejects(launch(runDir, () => assert.fail('must not generate'), () => assert.fail('must not resume another release'), [], { liveRetryAllowed, process: { exitCode: 0, argv: [] } }), /unresolved/);
+    await assert.rejects(launch(runDir, () => assert.fail('must not generate'), () => assert.fail('must not resume another release'), [], { liveRetryAllowed, auditProblems: () => [], process: { exitCode: 0, argv: [] } }), /unresolved/);
     assert.equal((await json(path.join(runDir, 'result.json'))).status, 'awaiting-verification');
     const retained = await json(path.join(runDir, 'task.json'));
     assert.equal(retained.sha, task.sha);

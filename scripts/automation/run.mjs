@@ -171,6 +171,12 @@ async function resumeLiveVerification(previous) {
     await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', reason });
     return { status: 'awaiting-verification', reason };
   };
+  if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Uncertain production state must be verified before retained verification resumes.');
+  const releaseProblems = auditProblems(policy, await json(path.join(stateDir, 'audit.json'), {}));
+  if (releaseProblems.length) {
+    await save(path.join(runDir, 'task.json'), task);
+    return { status: 'awaiting-release-conditions', problems: releaseProblems };
+  }
   if (!liveRetryAllowed(task, { manual: ['--retry-live-verification', '--recover-only', '--manual-run'].every(flag => process.argv.includes(flag)) })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.');
   if (task.kind !== 'normal') return hold('Isolated mutation candidate requires diagnosis; never route it into ordinary publication.');
   if (!/^auto\/normal-[a-z0-9-]+$/i.test(task.branch ?? '') || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !task.result) return hold('Invalid retained live-verification identity.');
