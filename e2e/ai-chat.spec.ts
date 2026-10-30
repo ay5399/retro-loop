@@ -12,6 +12,101 @@ const OUTSIDER_EMAIL = "e2e-chat-outsider@example.com";
 const OTHER_MEMBER_EMAIL = "e2e-chat-other-member@example.com";
 const TEAM_NAME = "E2Eチャットチーム";
 
+type WaitWindow = typeof window & {
+  waitRequests: number;
+  advanceWait: (phase: "partial" | "finish" | "fail") => void;
+};
+
+// Hold response headers and chunks separately so both SDK states are observable.
+async function installWaitStream(page: Page) {
+  await page.evaluate(() => {
+    const fixture = window as WaitWindow;
+    const originalFetch = window.fetch.bind(window);
+    fixture.waitRequests = 0;
+    window.fetch = async (resource, init) => {
+      if (new URL(String(resource), location.href).pathname !== "/api/chat") return originalFetch(resource, init);
+      fixture.waitRequests++;
+      return new Promise<Response>((resolve, reject) => {
+        let controller: ReadableStreamDefaultController<Uint8Array>;
+        let started = false;
+        const abort = () => {
+          const error = new DOMException("Stopped", "AbortError");
+          if (started) controller.error(error);
+          else reject(error);
+        };
+        init?.signal?.addEventListener("abort", abort, { once: true });
+        fixture.advanceWait = (phase) => {
+          if (phase === "fail") {
+            reject(new Error("Synthetic response failure"));
+            return;
+          }
+          const write = (chunk: object) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          if (phase === "partial") {
+            const body = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+            started = true;
+            resolve(new Response(body, { headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } }));
+            write({ type: "start", messageId: "wait-answer" });
+            write({ type: "text-start", id: "wait-text" });
+            write({ type: "text-delta", id: "wait-text", delta: "本人が取り組みたい行動を教えてください。" });
+          } else {
+            write({ type: "text-end", id: "wait-text" });
+            write({ type: "finish", finishReason: "stop" });
+            controller.close();
+          }
+        };
+      });
+    };
+  });
+}
+
+test("本人Problemの送信後、応答待ちから受信中へ案内が切り替わり完了で消える", async ({ page }) => {
+  await loginAsDev(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  await installWaitStream(page);
+  const status = page.locator("[data-chat-wait-status]");
+  const input = page.locator("[data-chat-input]");
+  await page.getByLabel("自分のProblemから相談する").selectOption({ label: "レビュー待ちが長かった" });
+  await page.getByRole("button", { name: "相談文の下書きに追加" }).click();
+  await expect(status).toHaveCount(0);
+  await page.screenshot({ path: "e2e/__screens__/chat-wait-status-before.png", fullPage: true });
+  await page.locator("[data-chat-send]").click();
+  await expect(status).toHaveAttribute("role", "status");
+  await expect(status).toHaveText("AIの応答を待っています。必要なら『応答を中止』できます。");
+  await expect(input).toBeDisabled();
+  await expect(page.getByRole("button", { name: "応答を中止", exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as WaitWindow).waitRequests)).toBe(1);
+  await page.screenshot({ path: "e2e/__screens__/chat-wait-status-after.png", fullPage: true });
+  await page.evaluate(() => (window as WaitWindow).advanceWait("partial"));
+  await expect(status).toHaveText("AIの応答を受信中です。");
+  await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText("本人が取り組みたい行動を教えてください。");
+  await page.evaluate(() => (window as WaitWindow).advanceWait("finish"));
+  await expect(input).toBeEnabled();
+  await expect(status).toHaveCount(0);
+  await expect(input).toHaveValue("");
+  expect(await page.evaluate(() => (window as WaitWindow).waitRequests)).toBe(1);
+});
+
+for (const outcome of ["stop", "fail"] as const) {
+  test(`応答待ちの${outcome}で待機案内を消して原文を復元する`, async ({ page }) => {
+    await loginAsDev(page, MEMBER_EMAIL);
+    await page.goto(retroUrl());
+    await installWaitStream(page);
+    const input = page.locator("[data-chat-input]");
+    const draft = "  自分のProblem：レビュー待ちが長かった\nまず原因を調べたいです。  ";
+    await input.fill(draft);
+    await page.locator("[data-chat-send]").click();
+    await expect(page.locator("[data-chat-wait-status]")).toContainText("AIの応答を待っています。");
+    await expect.poll(() => page.evaluate(() => (window as WaitWindow).waitRequests)).toBe(1);
+    if (outcome === "stop") await page.getByRole("button", { name: "応答を中止", exact: true }).click();
+    else await page.evaluate(() => (window as WaitWindow).advanceWait("fail"));
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue(draft);
+    await expect(page.locator("[data-chat-wait-status]")).toHaveCount(0);
+    await expect(page.locator("[data-chat-error]")).toContainText("相談文を入力欄に戻しました。");
+    expect(await page.evaluate(() => (window as WaitWindow).waitRequests)).toBe(1);
+  });
+}
+
 let teamId = "";
 let retroId = "";
 

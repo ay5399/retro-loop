@@ -211,6 +211,13 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
         </p>
       ) : null}
       {busy ? (
+        <p role="status" data-chat-wait-status className="text-sm text-muted">
+          {status === "submitted"
+            ? "AIの応答を待っています。必要なら『応答を中止』できます。"
+            : "AIの応答を受信中です。"}
+        </p>
+      ) : null}
+      {busy ? (
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void stop(); }}>
           応答を中止
         </button>
