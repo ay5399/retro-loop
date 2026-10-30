@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -9,6 +9,13 @@ import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid
 const diff = (text, file = 'e2e/chat.spec.ts') => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +12,1 @@\n+${text}\n`;
 
 const launch = mode => `OpenAI Codex v0.163.0\n--------\nworkdir: test\nmodel: test\napproval: never\nsandbox: ${mode}\nsession id: current\n--------\n`;
+
+test('installed CLI stdin probe stderr is accepted without scanning quoted tool output', async () => {
+  // Captured 2026-10-30 with the installed runner command, stdin and elevated workspace-write.
+  // Only the private worktree path and session ID were redacted.
+  const stderr = await readFile(new URL('./fixtures/codex-0.163.0-stderr.txt', import.meta.url), 'utf8');
+  assert.equal(requireImplementationSandbox(stderr + '\n' + launch('read-only')), 'workspace-write [workdir, /tmp, $TMPDIR]');
+});
 
 test('implementation accepts its workspace-write launch even when tools quote an older read-only launch', () => {
   const log = launch('workspace-write [workdir, /tmp, $TMPDIR]') + 'exec\nGet-Content old.log\n' + launch('read-only');

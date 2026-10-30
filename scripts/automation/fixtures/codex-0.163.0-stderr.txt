@@ -1,0 +1,17 @@
+OpenAI Codex v0.163.0
+--------
+workdir: <worktree>
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: <session>
+--------
+user
+Output only OK. Do not use tools, read files, change files, or run commands. This is a CLI stderr launch metadata probe.
+codex
+OK
+tokens used
+3,741
