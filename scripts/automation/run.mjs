@@ -157,7 +157,7 @@ async function verifyLiveCandidate(dir, sha, tag, task) {
   } catch (error) {
     let live;
     try { live = await json(path.join(outputDir, 'result.json'), {}); } catch { live = {}; }
-    const liveFailure = live.sha === sha && live.providerFailure || { category: 'verification-unresolved' };
+    const liveFailure = live.sha === sha && (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' };
     await save(path.join(runDir, 'task.json'), { ...task, sha, stage: 'live-ai-blocked', liveFailure, reason: error.message });
     error.liveVerificationBlocked = true;
     throw error;
@@ -177,7 +177,7 @@ async function resumeLiveVerification(previous) {
   if (task.pr) {
     task = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1 };
     await save(path.join(runDir, 'task.json'), task);
-    return resumePendingRelease({ ...previous, task });
+    return resumePendingRelease({ ...previous, task }, { verificationOnly: true });
   }
   const dir = await workspace(task.branch, true);
   return withWorkspace(dir, async () => {
@@ -312,6 +312,8 @@ async function main() {
     return;
   }
   let recovered;
+  // reconcileStartup throws on awaiting-verification; only a proved recovery
+  // reaches the current-work admission below.
   try {
     recovered = await reconcileStartup({ previous, prerequisitesPassed: true, infrastructureGatesPassed: true,
       repair: async prior => {
@@ -320,12 +322,12 @@ async function main() {
         prior = reconciliation.previous;
         // Migrate only the new checkpoint, never rewrite historical failures.
         // Older runners marked a failed live probe as an app defect.
-        if (['review', 'needs-fix'].includes(prior.task?.stage) && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '')) {
+        if (['review', 'needs-fix'].includes(prior.task?.stage) && Number.isSafeInteger(prior.task.attempt) && prior.task.attempt > 0 && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '')) {
           for (const tag of ['normal', 'normal-recovery', 'mutation', 'mutation-recovery']) {
             let live;
             try { live = await json(path.join(prior.dir, `${tag}-live-ai-${prior.task.attempt}/result.json`), {}); } catch { continue; }
             if (live.sha === prior.task.sha && live.status === 'failed') {
-              prior = { ...prior, task: { ...prior.task, stage: 'live-ai-blocked', liveFailure: live.providerFailure ?? { category: 'verification-unresolved' } } };
+              prior = { ...prior, task: { ...prior.task, stage: 'live-ai-blocked', liveFailure: (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' } } };
               await save(path.join(runDir, 'task.json'), prior.task);
               break;
             }
@@ -475,11 +477,15 @@ async function review(dir, sha, result, { planning = false, attempt = 1 } = {}) 
   if (verdict.sha !== sha || !['approve', 'revise', 'reject'].includes(verdict.verdict) || !verdict.reason?.trim()) throw new Error('Invalid or mismatched Claude review');
   return verdict;
 }
-async function resumePendingRelease(previous) {
+async function resumePendingRelease(previous, { verificationOnly = false } = {}) {
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Uncertain production state must be verified before resuming the original release.');
   const releaseProblems = auditProblems(policy, await json(path.join(stateDir, 'audit.json'), {}));
   if (releaseProblems.length) return { status: 'awaiting-release-conditions', problems: releaseProblems };
   const task = previous.task;
+  const holdVerification = async checkpoint => {
+    await save(path.join(runDir, 'task.json'), { ...checkpoint, stage: 'live-ai-blocked', liveFailure: { category: 'verification-unresolved' } });
+    return { status: 'awaiting-verification', reason: checkpoint.reason };
+  };
   if (!task || task.kind !== 'normal' || !Number.isSafeInteger(task.pr) || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !/^auto\/normal-[a-z0-9-]+$/i.test(task.branch ?? '') || !task.result?.prevention?.trim()) {
     const reason = 'Previous release checkpoint is incomplete; owner must identify and verify the original PR before release can resume.';
     await save(path.join(runDir, 'task.json'), { ...task, stage: 'awaiting-approval', previousRun: previous.id, reason });
@@ -508,6 +514,7 @@ async function resumePendingRelease(previous) {
         throw new Error(`${diagnostics}; rebase abort failed: ${abortError.message}`);
       }
       const recoveryTask = { ...task, remoteHeadSha: info.headRefOid, remoteBranch: task.remoteBranch ?? task.branch, stage: 'needs-fix', reason: diagnostics };
+      if (verificationOnly) return holdVerification(recoveryTask);
       await save(path.join(runDir, 'task.json'), recoveryTask);
       return develop('normal', { previous: { ...previous, task: recoveryTask, reason: diagnostics }, existingRelease: { task: recoveryTask, diagnostics, reviewAttempts: 0 } });
     }
@@ -524,6 +531,7 @@ async function resumePendingRelease(previous) {
     }
     if (verdict.verdict === 'revise') {
       const recoveryTask = { ...task, sha, remoteHeadSha: info.headRefOid, remoteBranch: task.remoteBranch ?? task.branch, verdict, stage: 'needs-fix', reason: verdict.reason };
+      if (verificationOnly) return holdVerification(recoveryTask);
       await save(path.join(runDir, 'task.json'), recoveryTask);
       return develop('normal', { previous: { ...previous, task: recoveryTask, reason: verdict.reason }, existingRelease: { task: recoveryTask, diagnostics: verdict.reason, reviewAttempts: 1 } });
     }
@@ -554,6 +562,7 @@ async function resumePendingRelease(previous) {
       }
       const diagnostics = `${validationStage} validation failed: ${error.message}\n${logs.join('\n')}`;
       const recoveryTask = { ...task, sha, remoteHeadSha: currentRemoteHead, remoteBranch: task.remoteBranch ?? task.branch, verdict, stage: 'needs-fix', reason: diagnostics };
+      if (verificationOnly) return holdVerification(recoveryTask);
       await save(path.join(runDir, 'task.json'), recoveryTask);
       return develop('normal', { previous: { ...previous, task: recoveryTask, reason: diagnostics }, existingRelease: { task: recoveryTask, diagnostics, reviewAttempts: 1 } });
     }

@@ -93,7 +93,7 @@ test('read-only quota preflight waits for both exhausted windows and never assum
 });
 
 test('actual live controller holds exact candidate on failed, corrupt or absent reports', async () => {
-  for (const report of [null, { sha: 'a'.repeat(40), providerFailure: { category: 'usage-limit' } }, 'corrupt', { sha: 'b'.repeat(40), providerFailure: { category: 'provider-unavailable' } }]) {
+  for (const report of [null, { sha: 'a'.repeat(40), failurePhase: 'preflight', providerFailure: { category: 'usage-limit' } }, 'corrupt', { sha: 'b'.repeat(40), providerFailure: { category: 'provider-unavailable' } }, { sha: 'a'.repeat(40), providerFailure: { category: 'provider-unavailable' } }]) {
     const writes = [], task = { branch: 'auto/normal-retained', sha: 'a'.repeat(40), result: { title: 'same feature' }, verdict: { verdict: 'approve' } };
     const fn = await load('verifyLiveCandidate', 'resumeLiveVerification', {
       path, runDir: '/run', policy: { liveAiVerification: { enabled: true } }, config: { repositoryPath: '/repo' }, stateDir: '/state', TASK_TIMING: { liveAiMs: 100 }, safeEnv: x => x,
@@ -106,7 +106,7 @@ test('actual live controller holds exact candidate on failed, corrupt or absent 
     assert.equal(writes[0].value.stage, 'live-ai-blocked');
     assert.equal(writes[0].value.sha, task.sha);
     assert.deepEqual(writes[0].value.result, task.result);
-    assert.equal(writes[0].value.liveFailure.category, report?.sha === task.sha ? 'usage-limit' : 'verification-unresolved');
+    assert.equal(writes[0].value.liveFailure.category, report?.sha === task.sha && report?.failurePhase === 'preflight' ? 'usage-limit' : 'verification-unresolved');
   }
 });
 

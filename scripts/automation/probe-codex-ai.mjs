@@ -33,8 +33,8 @@ createInterface({ input: proc.stdout }).on('line', line => {
   let msg; try { msg = JSON.parse(line); } catch { return; }
   if (pending.has(msg.id)) { const p = pending.get(msg.id); pending.delete(msg.id); if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result); return; }
   if (msg.id !== undefined) { send({ id: msg.id, error: { code: -32601, message: 'Probe does not execute tools or approval requests' } }); abort(new Error('Unexpected server request')); return; }
-  if (msg.method === 'error' && msg.params?.error) report.providerFailure = providerFailure(msg.params.error);
   if (!active) return;
+  if (msg.method === 'error' && msg.params?.error && msg.params.willRetry !== true) active.providerError = msg.params.error;
   if (msg.method === 'item/started' && !['userMessage', 'agentMessage', 'reasoning'].includes(msg.params.item?.type)) {
     send({ id: ++id, method: 'turn/interrupt', params: { threadId: active.threadId, turnId: msg.params.turnId } });
     abort(new Error('Tool use is not permitted in this dialogue probe')); return;
@@ -47,7 +47,8 @@ createInterface({ input: proc.stdout }).on('line', line => {
   if (msg.method === 'turn/completed') {
     const current = active; active = null;
     if (msg.params.turn.status !== 'completed') {
-      report.providerFailure ??= providerFailure(msg.params.turn.error);
+      report.inferenceFailed = true;
+      report.providerFailure = providerFailure(msg.params.turn.error ?? current.providerError);
       current.reject(new Error(`Inference did not complete: ${msg.params.turn.status}`));
     }
     else current.resolve({ text: current.text, firstDeltaMs: current.firstDeltaMs, elapsedMs: Date.now() - current.started });
@@ -62,7 +63,7 @@ try {
   report.authType = account?.type; report.planType = account?.planType;
   if (account?.type !== 'chatgpt') throw new Error('Probe requires ChatGPT subscription authentication; API-key auth is not allowed');
   const exhausted = exhaustedWindow(await rpc('account/rateLimits/read'));
-  if (exhausted) { report.providerFailure = exhausted; throw new Error('ChatGPT usage limit reached; no inference started'); }
+  if (exhausted) { report.failurePhase = 'preflight'; report.providerFailure = exhausted; throw new Error('ChatGPT usage limit reached; no inference started'); }
   const models = await rpc('model/list', { limit: 100, includeHidden: false });
   const model = models.data?.find(m => m.isDefault) ?? models.data?.[0];
   if (!model) throw new Error('No model returned');
