@@ -17,6 +17,125 @@ let retroId = "";
 
 const DRAFT_GUARD_SUGGESTIONS = ["今回の総括をして", "前回からの積み残しを指摘して", "次に試すべきことは?"];
 
+type StopPayload = { messages: { id: string; role: string; parts: { type: string; text?: string }[] }[] };
+type StopWindow = typeof window & { stopPayloads: StopPayload[] };
+
+// A browser-only SSE fixture: no real AI, server, timer, or fixed sleep.
+async function installStopStream(page: Page, partial: boolean) {
+  await page.evaluate((partial) => {
+    const originalFetch = window.fetch.bind(window);
+    const payloads: StopPayload[] = [];
+    (window as StopWindow).stopPayloads = payloads;
+    window.fetch = async (resource, init) => {
+      if (new URL(String(resource), location.href).pathname !== "/api/chat") return originalFetch(resource, init);
+      payloads.push(JSON.parse(String(init?.body)));
+      const turn = payloads.length;
+      const signal = init?.signal;
+      if (turn === 2 && !partial) {
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => reject(new DOMException("Stopped", "AbortError"));
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) abort();
+          window.addEventListener("finish-stop-fixture", () => resolve(), { once: true });
+        });
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const write = (chunk: object) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          write({ type: "start", messageId: `stop-answer-${turn}` });
+          write({ type: "text-start", id: "text" });
+          write({ type: "text-delta", id: "text", delta: turn === 2 ? "途中の問い返し" : `完了した問い返し${turn}` });
+          const finish = () => {
+            write({ type: "text-end", id: "text" });
+            write({ type: "finish", finishReason: "stop" });
+            controller.close();
+          };
+          if (turn === 2 && partial) {
+            signal?.addEventListener("abort", () => controller.error(new DOMException("Stopped", "AbortError")), { once: true });
+            window.addEventListener("finish-stop-fixture", finish, { once: true });
+          } else finish();
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } });
+    };
+  }, partial);
+}
+
+for (const partial of [false, true]) {
+  test(`応答${partial ? "途中" : "開始前"}に中止して原文を編集・再送する`, async ({ page }) => {
+    await loginAsDev(page, MEMBER_EMAIL);
+    await page.goto(retroUrl());
+    await installStopStream(page, partial);
+    const input = page.locator("[data-chat-input]");
+    const send = page.locator("[data-chat-send]");
+    const stop = page.getByRole("button", { name: "応答を中止", exact: true });
+    await input.fill("過去の完了相談");
+    await send.click();
+    await expect(input).toBeEnabled();
+    await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText("完了した問い返し1");
+    await page.getByLabel("自分のProblemから相談する").selectOption({ label: "レビュー待ちが長かった" });
+    await page.getByRole("button", { name: "相談文の下書きに追加" }).click();
+    const draft = `  ${await input.inputValue()}\nまず待ち時間を調べたいです。\n  `;
+    await input.fill(draft);
+    await send.click();
+    await expect(stop).toBeVisible();
+    await expect(input).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => (window as StopWindow).stopPayloads.length)).toBe(2);
+    if (partial) {
+      await expect(page.locator("[data-ai-chat] li.justify-start").last()).toHaveText("途中の問い返し");
+      await page.screenshot({ path: "e2e/__screens__/chat-stop-before.png", fullPage: true });
+    }
+    await stop.click();
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue(draft);
+    await expect(page.locator("[data-ai-chat]").getByRole("status")).toContainText("応答を中止しました。");
+    await expect(stop).toHaveCount(0);
+    if (partial) {
+      await expect(page.locator("[data-ai-chat] li.justify-start").last()).toContainText("未完了の応答です。");
+      await page.screenshot({ path: "e2e/__screens__/chat-stop-after.png", fullPage: true });
+    }
+    expect(await page.evaluate(() => (window as StopWindow).stopPayloads.length)).toBe(2);
+    const edited = `${draft}\n担当は私です。`;
+    await input.fill(edited);
+    await send.click();
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue("");
+    await expect(page.locator("[data-chat-error]")).toHaveCount(0);
+    await expect(page.locator("[data-ai-chat] li.justify-start")).toHaveText(["完了した問い返し1", "完了した問い返し3"]);
+    const payloads = await page.evaluate(() => (window as StopWindow).stopPayloads);
+    expect(payloads).toHaveLength(3);
+    expect(payloads[2].messages.slice(0, 2)).toEqual(payloads[1].messages.slice(0, 2));
+    expect(payloads[2].messages).toHaveLength(3);
+    expect(payloads[2].messages[2].id).toBe(payloads[1].messages[2].id);
+    expect(payloads[2].messages[2].parts).toEqual([{ type: "text", text: edited.trim() }]);
+  });
+}
+
+test("通常完了直後の中止クリックは完了済みの相談文を復元しない", async ({ page }) => {
+  await loginAsDev(page, MEMBER_EMAIL);
+  await page.goto(retroUrl());
+  await installStopStream(page, true);
+  const input = page.locator("[data-chat-input]");
+  await input.fill("前の相談");
+  await page.locator("[data-chat-send]").click();
+  await expect(input).toBeEnabled();
+  await input.fill("正常完了する相談");
+  await page.locator("[data-chat-send]").click();
+  await expect(page.locator("[data-ai-chat] li.justify-start").last()).toHaveText("途中の問い返し");
+  await page.evaluate(async () => {
+    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "応答を中止")!;
+    window.dispatchEvent(new Event("finish-stop-fixture"));
+    // Let the completed stream settle, then dispatch a stale UI click.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    button.click();
+  });
+  await expect(input).toBeEnabled();
+  await expect(input).toHaveValue("");
+  await expect(page.locator("[data-chat-error]")).toHaveCount(0);
+  await expect(page.getByText("未完了の応答です。再送すると置き換わります。", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as StopWindow).stopPayloads.length)).toBe(2);
+});
+
 async function mockDraftGuardChat(page: Page) {
   const payloads: { messages: { role: string; parts: { type: string; text?: string }[] }[] }[] = [];
   await page.route("**/api/chat", async (route) => {
