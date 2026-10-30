@@ -48,6 +48,16 @@ export function assertConfirmationReply(text) {
   expect(text).not.toMatch(/(?:保存|追加|登録)(?:(?:が|は)?完了(?!したら|すれば|後)|(?:し|され|でき|いたし)ました|済み|(?:し|され)て(?:います|あります|おきました|おいた))/);
 }
 
+// Only these real candidate components may use the synthetic persistence adapter.
+export function resolveFixtureActions(importer, sourceDir) {
+  const retroDir = path.join(sourceDir, 'app/teams/[teamId]/retros/[retroId]');
+  const allowed = ['kpt-board.client.tsx', 'own-try-confirmation.tsx']
+    .map(name => path.join(retroDir, name));
+  return allowed.includes(importer)
+    ? { path: path.join(root, 'scripts/automation/live-ui-store.ts') }
+    : undefined;
+}
+
 export async function runBrowserProbe({ complete, dir, report, inputs, saved, sourceRoot = root, signal, expiresAt = Date.now() + 330_000 }) {
   if (typeof saved !== 'string' || !saved.trim()) throw new Error('Synthetic saved note must match the input scenario');
   const localRequire = createRequire(path.join(root, 'package.json'));
@@ -62,7 +72,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
   const fixtureFiles = await Promise.all(['live-ui-entry.tsx', 'live-ui-store.ts'].map(f => realpath(path.join(root, 'scripts/automation', f))));
   await build({ absWorkingDir: root, nodePaths: [path.join(root, 'node_modules')], alias: await fixtureSdkAliases(), tsconfigRaw: { compilerOptions: { baseUrl: sourceRoot, paths: { '@/*': ['src/*'] } } }, entryPoints: ['scripts/automation/live-ui-entry.tsx'], outfile: path.join(dir, 'app.js'), bundle: true, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{ name: 'synthetic-actions', setup(b) {
     b.onResolve({ filter: /^\.\.\/\.\.\/src\// }, args => args.importer.endsWith('live-ui-entry.tsx') ? { path: path.join(sourceRoot, args.path.slice(6) + '.tsx') } : undefined);
-    b.onResolve({ filter: /^\.\/actions$/ }, args => args.importer.endsWith('kpt-board.client.tsx') ? { path: path.join(root, 'scripts/automation/live-ui-store.ts') } : undefined);
+    b.onResolve({ filter: /^\.\/actions$/ }, args => resolveFixtureActions(args.importer, sourceDir));
     b.onLoad({ filter: /.*/ }, async args => {
       const file = await realpath(args.path);
       if (!file.startsWith(sourceDir + path.sep) && !file.startsWith(modulesDir + path.sep) && !fixtureFiles.includes(file)) throw new Error('Browser bundle attempted to read outside source, dependencies or fixture');
