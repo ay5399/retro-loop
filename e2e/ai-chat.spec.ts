@@ -18,7 +18,7 @@ let retroId = "";
 const DRAFT_GUARD_SUGGESTIONS = ["今回の総括をして", "前回からの積み残しを指摘して", "次に試すべきことは?"];
 
 type StopPayload = { messages: { id: string; role: string; parts: { type: string; text?: string }[] }[] };
-type StopWindow = Window & { stopPayloads: StopPayload[] };
+type StopWindow = typeof window & { stopPayloads: StopPayload[] };
 
 // A browser-only SSE fixture: no real AI, server, timer, or fixed sleep.
 async function installStopStream(page: Page, partial: boolean) {
