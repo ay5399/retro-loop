@@ -13,6 +13,23 @@ const end = source.indexOf('  const tracking =', start);
 assert.ok(start >= 0 && end > start, 'Actual main startup recovery markers must exist');
 const startupSource = source.slice(start, end);
 
+test('verification-only identity survives release and intermediate checkpoints across launches', async () => scenario(async ({ add, launch, json, save }) => {
+  await add('2026-10-25-5', { status: 'failed' }, { kind: 'normal', pr: 123, stage: 'release', retainedVerification: true, sha: 'a'.repeat(40) });
+  const second = await add('2026-10-25-13');
+  await assert.rejects(launch(second, () => assert.fail('retained release must not develop'), async (previous, options) => {
+    assert.equal(options.verificationOnly, true);
+    await save(path.join(second, 'task.json'), { ...previous.task, stage: 'needs-fix' });
+    return { status: 'awaiting-verification' };
+  }), /unresolved/);
+  const third = await add('2026-10-25-21');
+  await assert.rejects(launch(third, () => assert.fail('intermediate retained checkpoint must not develop')), /unresolved/);
+  assert.equal((await json(path.join(third, 'result.json'))).status, 'awaiting-verification');
+  const task = await json(path.join(third, 'task.json'));
+  assert.equal(task.retainedVerification, true);
+  assert.equal(task.pr, 123);
+  assert.equal(task.stage, 'live-ai-blocked');
+}));
+
 test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json }) => {
   const task = { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-unresolved' } };
   await add('2026-10-25-5', { status: 'awaiting-verification' }, task);

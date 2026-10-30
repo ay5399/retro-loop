@@ -1,4 +1,23 @@
 import test from 'node:test';
+
+test('live-blocked mutation is not tracked as a pending proposal and exits two', async () => {
+  const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
+  const from = source.indexOf('  const mutationBudget =');
+  const to = source.indexOf('\n}\nasync function workspace(', from);
+  const outcomes = [], tracking = { experiments: [] }, process = { exitCode: 0 }, writes = [];
+  const context = {
+    taskAdmissionBudget, TASK_TIMING, admissionCiMs: 180000, deadline: Date.now() + 90 * 60000, deferCurrent: false, recovered: null, outcomes,
+    runId: '2026-10-29-5', tracking, now: new Date(), mutationDue: () => true,
+    develop: async () => ({ status: 'awaiting-verification', sha: 'a'.repeat(40) }), note: () => assert.fail('No false failure notification'),
+    save: async (file, value) => writes.push(value), jstDate: () => '2026-10-29', stateDir: '/state', runDir: '/run', path: { join: (...parts) => parts.join('/') }, console: { log: () => {} }, process,
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction(...Object.keys(context), source.slice(from, to))(...Object.values(context));
+  assert.deepEqual(tracking, { experiments: [] });
+  assert.equal(outcomes[0].status, 'awaiting-verification');
+  assert.equal(writes.at(-1).status, 'awaiting-verification');
+  assert.equal(process.exitCode, 2);
+});
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';

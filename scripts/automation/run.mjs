@@ -158,7 +158,7 @@ async function verifyLiveCandidate(dir, sha, tag, task) {
     let live;
     try { live = await json(path.join(outputDir, 'result.json'), {}); } catch { live = {}; }
     const liveFailure = live.sha === sha && (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' };
-    await save(path.join(runDir, 'task.json'), { ...task, sha, stage: 'live-ai-blocked', liveFailure, reason: error.message });
+    await save(path.join(runDir, 'task.json'), { ...task, sha, retainedVerification: true, stage: 'live-ai-blocked', liveFailure, reason: error.message });
     error.liveVerificationBlocked = true;
     throw error;
   }
@@ -166,7 +166,7 @@ async function verifyLiveCandidate(dir, sha, tag, task) {
 
 // Continue verification of a retained candidate. This function cannot generate code.
 async function resumeLiveVerification(previous) {
-  let task = previous.task;
+  let task = { ...previous.task, retainedVerification: true };
   const hold = async reason => {
     await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', reason });
     return { status: 'awaiting-verification', reason };
@@ -333,14 +333,20 @@ async function main() {
             let live;
             try { live = await json(path.join(prior.dir, `${tag}-live-ai-${prior.task.attempt}/result.json`), {}); } catch { continue; }
             if (live.sha === prior.task.sha && live.status === 'failed') {
-              prior = { ...prior, task: { ...prior.task, stage: 'live-ai-blocked', liveFailure: (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' } } };
+              prior = { ...prior, task: { ...prior.task, retainedVerification: true, stage: 'live-ai-blocked', liveFailure: (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' } } };
               await save(path.join(runDir, 'task.json'), prior.task);
               break;
             }
           }
         }
         if (prior.task?.stage === 'live-ai-blocked') return resumeLiveVerification(prior);
-        return ['awaiting-release', 'awaiting-release-conditions'].includes(prior.result?.status) || ['release', 'awaiting-release', 'awaiting-release-conditions'].includes(prior.task?.stage) ? resumePendingRelease(prior) : develop(prior.task?.kind === 'mutation' ? 'mutation' : 'normal', { previous: prior });
+        if (['awaiting-release', 'awaiting-release-conditions'].includes(prior.result?.status) || ['release', 'awaiting-release', 'awaiting-release-conditions'].includes(prior.task?.stage)) return resumePendingRelease(prior, { verificationOnly: prior.task?.retainedVerification === true });
+        if (prior.task?.retainedVerification === true) {
+          const reason = 'Retained verification was interrupted; reconcile existing evidence without code generation.';
+          await save(path.join(runDir, 'task.json'), { ...prior.task, stage: 'live-ai-blocked', liveFailure: { category: 'verification-unresolved' }, reason });
+          return { status: 'awaiting-verification', reason };
+        }
+        return develop(prior.task?.kind === 'mutation' ? 'mutation' : 'normal', { previous: prior });
       },
       record: state => save(path.join(runDir, 'startup-recovery.json'), { ...state, checkedAt: new Date().toISOString() }),
     });
@@ -384,11 +390,12 @@ async function main() {
   if (mutationDueNow && mutationBudget.admitted) {
     try {
       const experiment = await develop('mutation');
-      if (experiment) { outcomes.push({ status: 'pending', phase: 'mutation', pr: experiment.pr }); tracking.experiments.push(experiment); tracking.lastMutationDate = jstDate(now); await save(path.join(stateDir, 'tracking.json'), tracking); }
+      if (experiment?.status === 'awaiting-verification') outcomes.push({ ...experiment, phase: 'mutation' });
+      else if (experiment) { outcomes.push({ status: 'pending', phase: 'mutation', pr: experiment.pr }); tracking.experiments.push(experiment); tracking.lastMutationDate = jstDate(now); await save(path.join(stateDir, 'tracking.json'), tracking); }
     } catch (error) { outcomes.push({ status: 'failed', phase: 'mutation', reason: error.message }); await note(`大胆案の試作を完了できませんでした。\n\n${error.message}`); }
   }
   await save(path.join(stateDir, 'tracking.json'), tracking);
-  const status = outcomes.some(o => o?.status === 'failed') ? 'failed' : deferCurrent ? recovered ? 'recovered' : 'deferred' : outcomes.filter(outcome => outcome.phase !== 'mutation').at(-1)?.status ?? 'no-change';
+  const status = outcomes.some(o => o?.status === 'failed') ? 'failed' : outcomes.some(o => o?.status === 'awaiting-verification') ? 'awaiting-verification' : deferCurrent ? recovered ? 'recovered' : 'deferred' : outcomes.filter(outcome => outcome.phase !== 'mutation').at(-1)?.status ?? 'no-change';
   const result = { status, outcomes, at: new Date().toISOString() };
   await save(path.join(runDir, 'result.json'), result);
   console.log(JSON.stringify(result));
