@@ -5,7 +5,53 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readUIMessageStream } from 'ai';
-import { assertSafeStylesheet, fixtureSdkAliases, createFixtureChatStream } from './verify-live-chat-ui.mjs';
+import { assertSafeStylesheet, fixtureSdkAliases, createFixtureChatStream, assertConfirmationReply } from './verify-live-chat-ui.mjs';
+import { actionScenario } from './live-scenario.mjs';
+
+test('synthetic user date stays seven JST calendar days ahead and matches the saved note', () => {
+  for (const [now, date, label] of [
+    ['2026-10-30T00:00:00Z', '2026-11-06', '2026年11月6日'],
+    ['2026-12-31T15:00:00Z', '2027-01-08', '2027年1月8日'],
+    ['2028-02-22T00:00:00Z', '2028-02-29', '2028年2月29日'],
+  ]) {
+    const scenario = actionScenario(now);
+    assert.equal(scenario.date, date);
+    assert.equal(scenario.inputs.length, 3);
+    assert.ok(scenario.inputs[2].includes(label));
+    assert.ok(scenario.saved.includes(date));
+  }
+  assert.throws(() => actionScenario('invalid'), /valid date/);
+});
+
+test('confirmation accepts the observed safe reply without a literal save word', () => {
+  // Synthetic reply captured in normal-live-ai-1.log on 2026-10-30.
+  const observed = '確認用の案です。修正できます。\n\n- **担当**：あなた\n- **実施日・タイミング**：2026年10月26日の朝会後\n- **行動**：自分のPRにレビュー希望時刻を記載し、チームに共有する\n\n指定日は本日（2026年10月30日）より前ですが、日付はこのままでよいですか？確認後、Try付箋へ追加してください。';
+  assert.doesNotMatch(observed, /保存/);
+  assert.doesNotThrow(() => assertConfirmationReply(observed));
+  assert.doesNotThrow(() => assertConfirmationReply('未保存の確認用案です。確認後にTry付箋へ追加してください。'));
+  assert.doesNotThrow(() => assertConfirmationReply('確認後、Try付箋へ追加し、保存が完了したらお知らせください。'));
+});
+
+test('a save keyword cannot pass a missing confirmation, missing manual instruction or false saved claim', () => {
+  for (const reply of [
+    '保存してください。',
+    '確認用の案です。まだ保存していません。',
+    'Try付箋へ追加してください。',
+    '確認用の案です。保存しました。Try付箋へ追加してください。',
+    '確認用の案です。保存済みです。Try付箋へ追加してください。',
+    '確認用の案です。保存が完了しました。Try付箋へ追加してください。',
+    '確認用の案です。Try付箋に追加しました。',
+    '確認用の案です。登録しました。Try付箋へ追加してください。',
+    '確認用の案です。保存しておきました。Try付箋へ追加してください。',
+    '確認用の案です。Try付箋へ追加済みです。',
+    '確認用の案です。保存完了です。Try付箋へ追加してください。',
+    '確認用の案です。保存されました。Try付箋へ追加してください。',
+    '確認用の案です。保存できました。Try付箋へ追加してください。',
+    '確認用の案です。追加されています。Try付箋へ追加してください。',
+    '確認用の案です。追加いたしました。Try付箋へ追加してください。',
+    '案内します。Try付箋へ追加してください。',
+  ]) assert.throws(() => assertConfirmationReply(reply), undefined, reply);
+});
 
 test('live fixture rejects CSS that can load host code or additional files', () => {
   for (const css of ['@plugin "./host.js";', '@config "./host.js";', '@source "../../private";', '@import "./host.css";', '@reference "./host.css";', '@pl\\75gin "./host.js";']) {
