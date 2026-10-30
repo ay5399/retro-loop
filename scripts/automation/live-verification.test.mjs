@@ -95,6 +95,18 @@ test('provider diagnostics distinguish quota and transport without storing upstr
   assert.deepEqual(providerFailure({ message: 'unknown private diagnostics' }), { category: 'verification-unresolved' });
 });
 
+test('manual diagnostic flags cannot overwrite a retained rejection through a new review', async () => {
+  const writes = [];
+  const fn = await load('resumeLiveVerification', 'main', {
+    path, runDir: '/run', process: { argv: ['--manual-run', '--recover-only', '--retry-live-verification'] }, liveRetryAllowed,
+    save: async (file, value) => writes.push(value), workspace: () => assert.fail('No rebase, fresh review, push or release after rejection'),
+  });
+  const outcome = await fn({ task: { kind: 'normal', sha: 'a'.repeat(40), verdict: { verdict: 'reject', risk: 'approval-required' } } });
+  assert.equal(outcome.status, 'awaiting-approval');
+  assert.equal(writes.at(-1).stage, 'awaiting-approval');
+  assert.equal(writes.at(-1).verdict.verdict, 'reject');
+});
+
 test('rebase conflict and remote divergence erase stale transient retry eligibility', async () => {
   for (const failure of ['conflict', 'remote']) {
     const sha = 'a'.repeat(40), writes = [];

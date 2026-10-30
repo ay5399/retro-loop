@@ -171,6 +171,11 @@ async function resumeLiveVerification(previous) {
     await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', liveFailure, reason });
     return { status: 'awaiting-verification', reason };
   };
+  if (task.verdict?.verdict === 'reject' || task.verdict?.risk && task.verdict.risk !== 'reversible' || task.stage === 'awaiting-approval') {
+    const reason = 'Retained candidate requires owner approval; diagnostic retries cannot replace this verdict.';
+    await save(path.join(runDir, 'task.json'), { ...task, stage: 'awaiting-approval', reason });
+    return { status: 'awaiting-approval', reason };
+  }
   if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Uncertain production state must be verified before retained verification resumes.');
   const releaseProblems = auditProblems(policy, await json(path.join(stateDir, 'audit.json'), {}));
   if (releaseProblems.length) {

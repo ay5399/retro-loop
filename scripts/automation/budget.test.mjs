@@ -1,5 +1,10 @@
 import test from 'node:test';
 
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';
+const minute = 60_000;
+
 test('live-blocked mutation is not tracked as a pending proposal and exits two', async () => {
   const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
   const from = source.indexOf('  const mutationBudget =');
@@ -18,10 +23,7 @@ test('live-blocked mutation is not tracked as a pending proposal and exits two',
   assert.equal(writes.at(-1).status, 'awaiting-verification');
   assert.equal(process.exitCode, 2);
 });
-import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';
-const minute = 60_000;
+
 
 test('shared actual review/live/release limits and generation caps fit a 90 minute normal run', () => {
   assert.equal(TASK_TIMING.reviewMs, 5 * minute);

@@ -91,7 +91,12 @@ try {
 } catch (error) {
   report.status = 'failed'; report.reason = error.message; process.exitCode = 1;
   if (report.providerFailure?.category === 'usage-limit') {
-    try { report.providerFailure = exhaustedWindow(await rpc('account/rateLimits/read')) ?? report.providerFailure; } catch { /* Unknown reset stays blocked. */ }
+    let refreshTimer;
+    try {
+      const limits = await Promise.race([rpc('account/rateLimits/read'), new Promise((_, reject) => { refreshTimer = setTimeout(() => reject(new Error('Rate-limit refresh timed out')), 3000); })]);
+      report.providerFailure = exhaustedWindow(limits) ?? report.providerFailure;
+    } catch { /* Preserve the known usage-limit failure if refresh is unavailable. */ }
+    finally { clearTimeout(refreshTimer); }
   }
 }
 finally {
