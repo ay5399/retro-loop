@@ -338,10 +338,12 @@ async function main() {
         prior = reconciliation.previous;
         // Migrate only the new checkpoint, never rewrite historical failures.
         // Older runners marked a failed live probe as an app defect.
-        if (['review', 'needs-fix'].includes(prior.task?.stage) && Number.isSafeInteger(prior.task.attempt) && prior.task.attempt > 0 && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '')) {
-          for (const tag of ['normal', 'normal-recovery', 'mutation', 'mutation-recovery']) {
+        if (['review', 'needs-fix'].includes(prior.task?.stage) && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '')) {
+          const liveDirectories = ['resumed-live-ai'];
+          if (Number.isSafeInteger(prior.task.attempt) && prior.task.attempt > 0) liveDirectories.push(...['normal', 'normal-recovery', 'mutation', 'mutation-recovery'].map(tag => `${tag}-live-ai-${prior.task.attempt}`));
+          for (const directory of liveDirectories) {
             let live;
-            try { live = await json(path.join(prior.dir, `${tag}-live-ai-${prior.task.attempt}/result.json`), {}); } catch { continue; }
+            try { live = await json(path.join(prior.dir, directory, 'result.json'), {}); } catch { continue; }
             if (live.sha === prior.task.sha && live.status === 'failed') {
               prior = { ...prior, task: { ...prior.task, retainedVerification: true, stage: 'live-ai-blocked', liveFailure: (live.inferenceFailed === true || live.failurePhase === 'preflight') && live.providerFailure || { category: 'verification-unresolved' } } };
               await save(path.join(runDir, 'task.json'), prior.task);
@@ -349,13 +351,8 @@ async function main() {
             }
           }
         }
-        if (prior.task?.stage === 'live-ai-blocked') return resumeLiveVerification(prior);
+        if (prior.task?.stage === 'live-ai-blocked' || prior.task?.retainedVerification === true) return resumeLiveVerification(prior);
         if (['awaiting-release', 'awaiting-release-conditions'].includes(prior.result?.status) || ['release', 'awaiting-release', 'awaiting-release-conditions'].includes(prior.task?.stage)) return resumePendingRelease(prior, { verificationOnly: prior.task?.retainedVerification === true });
-        if (prior.task?.retainedVerification === true) {
-          const reason = 'Retained verification was interrupted; reconcile existing evidence without code generation.';
-          await save(path.join(runDir, 'task.json'), { ...prior.task, stage: 'live-ai-blocked', liveFailure: { category: 'verification-unresolved' }, reason });
-          return { status: 'awaiting-verification', reason };
-        }
         return develop(prior.task?.kind === 'mutation' ? 'mutation' : 'normal', { previous: prior });
       },
       record: state => save(path.join(runDir, 'startup-recovery.json'), { ...state, checkedAt: new Date().toISOString() }),

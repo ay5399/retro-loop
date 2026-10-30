@@ -16,11 +16,8 @@ const startupSource = source.slice(start, end);
 test('verification-only identity survives release and intermediate checkpoints across launches', async () => scenario(async ({ add, launch, json, save }) => {
   await add('2026-10-25-5', { status: 'failed' }, { kind: 'normal', pr: 123, stage: 'release', retainedVerification: true, sha: 'a'.repeat(40) });
   const second = await add('2026-10-25-13');
-  await assert.rejects(launch(second, () => assert.fail('retained release must not develop'), async (previous, options) => {
-    assert.equal(options.verificationOnly, true);
-    await save(path.join(second, 'task.json'), { ...previous.task, stage: 'needs-fix' });
-    return { status: 'awaiting-verification' };
-  }), /unresolved/);
+  await assert.rejects(launch(second, () => assert.fail('retained release must not develop'), () => assert.fail('unknown interrupted verification must not repeat live calls')), /unresolved/);
+  await save(path.join(second, 'task.json'), { ...await json(path.join(second, 'task.json')), stage: 'needs-fix' });
   const third = await add('2026-10-25-21');
   await assert.rejects(launch(third, () => assert.fail('intermediate retained checkpoint must not develop')), /unresolved/);
   assert.equal((await json(path.join(third, 'result.json'))).status, 'awaiting-verification');
@@ -28,6 +25,22 @@ test('verification-only identity survives release and intermediate checkpoints a
   assert.equal(task.retainedVerification, true);
   assert.equal(task.pr, 123);
   assert.equal(task.stage, 'live-ai-blocked');
+}));
+
+test('legacy resumed-live failure without attempt preserves PR and original evidence without generation', async () => scenario(async ({ add, launch, json, save }) => {
+  const sha = 'a'.repeat(40);
+  const old = await add('2026-10-25-5', { status: 'failed' }, { kind: 'normal', pr: 123, stage: 'needs-fix', sha });
+  await mkdir(path.join(old, 'resumed-live-ai'));
+  const file = path.join(old, 'resumed-live-ai/result.json');
+  await save(file, { sha, status: 'failed' });
+  const original = await readFile(file, 'utf8');
+  const current = await add('2026-10-25-13');
+  await assert.rejects(launch(current, () => assert.fail('legacy live failure must not generate'), () => assert.fail('legacy failure needs diagnosis')), /unresolved/);
+  const task = await json(path.join(current, 'task.json'));
+  assert.equal(task.stage, 'live-ai-blocked');
+  assert.equal(task.pr, 123);
+  assert.equal(task.retainedVerification, true);
+  assert.equal(await readFile(file, 'utf8'), original);
 }));
 
 test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json }) => {
@@ -63,7 +76,7 @@ async function scenario(callback) {
     return dir;
   };
   const launch = async (runDir, develop, resumePendingRelease = () => assert.fail('Unexpected release resume'), releaseProblems = [], overrides = {}) => {
-    const context = { policy: {}, path, stateDir, runDir, inspectPreviousRun, reconcileStartup, develop, resumePendingRelease, save, json, readdir, config: { repositoryPath: stateDir }, gh: async () => assert.fail('Unexpected workflow call'), git: async () => assert.fail('Unexpected remote call'), releaseProblems, process: { exitCode: 0 }, ...overrides };
+    const context = { liveRetryAllowed, auditProblems: () => [], policy: {}, path, stateDir, runDir, inspectPreviousRun, reconcileStartup, develop, resumePendingRelease, save, json, readdir, config: { repositoryPath: stateDir }, gh: async () => assert.fail('Unexpected workflow call'), git: async () => assert.fail('Unexpected remote call'), releaseProblems, process: { exitCode: 0, argv: [] }, ...overrides };
     const run = new AsyncFunction(...Object.keys(context), uncertaintySource + startupSource + '\nreturn recovered;');
     return run(...Object.values(context));
   };
