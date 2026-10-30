@@ -95,6 +95,35 @@ test('recovery retains nested approved context across a previous planning timeou
   assert.equal(result.plan.title, 'original approved context');
 }));
 
+test('recovery excludes only untracked legacy controller output and preserves original candidate and index', async () => fixture(async ({ original, fresh, git, prepareRecovery, previous }) => {
+  await writeFile(path.join(original, 'automation-result.json'), '{"noChange":false}');
+  const status = await git(['status', '--porcelain'], original);
+  const index = await git(['diff', '--cached'], original);
+  const result = await prepareRecovery(previous, fresh);
+  assert.equal(result.transferredPatch, true);
+  assert.equal((await readFile(path.join(fresh, 'docs/dirty.md'), 'utf8')).trim(), 'candidate dirty');
+  await assert.rejects(readFile(path.join(fresh, 'automation-result.json')), { code: 'ENOENT' });
+  assert.equal(await readFile(path.join(original, 'automation-result.json'), 'utf8'), '{"noChange":false}');
+  assert.equal(await git(['status', '--porcelain'], original), status);
+  assert.equal(await git(['diff', '--cached'], original), index);
+}));
+
+test('legacy output exclusion never allows tracked output or other protected files', async () => fixture(async ({ original, fresh, git, calls, prepareRecovery, previous }) => {
+  await writeFile(path.join(original, 'automation-result.json'), '{}');
+  await writeFile(path.join(original, 'scripts/controller.mjs'), 'protected change');
+  await assert.rejects(prepareRecovery(previous, fresh), /protected paths/);
+  await git(['add', 'automation-result.json'], original);
+  await assert.rejects(prepareRecovery(previous, fresh), /tracks reserved controller output/);
+  assert.equal(calls.filter(call => call.args[0] === 'apply').length, 0);
+}));
+
+test('interrupted baseline handoff uses the preserved original candidate branch', async () => fixture(async ({ fresh, prepareRecovery, previous }) => {
+  const result = await prepareRecovery({ ...previous, task: { ...previous.task, branch: 'auto/normal-empty-recovery', recoverySourceBranch: previous.task.branch } }, fresh);
+  assert.equal(result.transferredPatch, true);
+  assert.equal(result.branch, previous.task.branch);
+  assert.equal((await readFile(path.join(fresh, 'docs/dirty.md'), 'utf8')).trim(), 'candidate dirty');
+}));
+
 test('recovery rejects unsafe branch and protected candidate changes before apply', async () => fixture(async ({ original, fresh, calls, prepareRecovery, previous }) => {
   const applied = () => calls.filter(call => call.args[0] === 'apply').length;
   await assert.rejects(prepareRecovery({ ...previous, task: { branch: '../outside' } }, fresh), /Unsafe previous task branch/);
