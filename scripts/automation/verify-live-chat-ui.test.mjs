@@ -108,3 +108,14 @@ test('successful fixture turns finish with distinct assistant IDs and preserve s
   assert.equal(messages.length, 2);
   assert.deepEqual(report.transcripts.map(turn => ({ input: turn.input, text: turn.text })), [{ input: '相談1', text: '保存前に確認します' }, { input: '相談2', text: '保存前に確認します' }]);
 });
+
+
+test('fixture records upstream failure even when SDK turns it into an error stream', async () => {
+  const report = { transcripts: [] };
+  const stream = createFixtureChatStream({ input: 'synthetic', report, complete: async () => { throw new Error('synthetic upstream unavailable'); } });
+  const events = [];
+  for await (const event of stream) events.push(event);
+  assert.equal(report.inferenceFailed, true);
+  assert.equal(report.transcripts.length, 0);
+  assert.ok(events.some(event => event.type === 'error'));
+});

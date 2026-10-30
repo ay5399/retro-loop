@@ -15,7 +15,7 @@ const end = source.indexOf('async function adopt(exp) {');
 assert.ok(start >= 0 && end > start);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1, afterCiStatus, pushFailures = 0, pushRemoteOutcome = 'unchanged', runMinutes = 90, planningErrors = [], previousRecoveryPlan = false } = {}) {
+async function runScenario({ baseline = 'passed', decision = 'implement', implementNoChange = false, missingEvidence = false, badEncoding = false, previous = false, omitRegression = false, resume = false, rebaseConflict = false, reviewChoices = [], resumeCiStatus, localRecoveryCheckpoint = false, resumeLiveFailure = false, elapsedClock = false, missingEvidenceFailures = 1, afterCiStatus, pushFailures = 0, pushRemoteOutcome = 'unchanged', runMinutes = 90, planningErrors = [], previousRecoveryPlan = false, verificationOnly = false } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'retro-recovery-'));
   const calls = [];
   let elapsedMs = 0;
@@ -125,7 +125,8 @@ async function runScenario({ baseline = 'passed', decision = 'implement', implem
     };
     const resumeDeclaration = source.slice(source.indexOf('async function resumePendingRelease('), source.indexOf('async function prepareRecovery('));
     const prior = { id: 'old-run', dir: runDir, reason: 'Previous release incomplete', task: { kind: 'normal', sha: '0'.repeat(40), branch: localRecoveryCheckpoint ? 'auto/normal-local-recovery' : 'auto/normal-original', ...(localRecoveryCheckpoint ? { remoteBranch: 'auto/normal-original', remoteHeadSha: '0'.repeat(40) } : {}), pr: 123, issue: 456, result, stage: 'awaiting-release' } };
-    const run = new AsyncFunction(...Object.keys(context), (resume ? resumeDeclaration : '') + source.slice(start, end) + (resume ? `\nreturn resumePendingRelease(${JSON.stringify(prior)});` : '\nreturn develop("normal", ' + JSON.stringify(previous ? { previous: { id: 'old-run', reason: 'previous evidence missing', ...(previousRecoveryPlan ? { task: { recovery: { plan: { title: 'original approved context' } } } } : {}) } } : {}) + ');'));
+    const liveDeclaration = source.slice(source.indexOf('async function verifyLiveCandidate('), source.indexOf('async function resumeLiveVerification('));
+    const run = new AsyncFunction(...Object.keys(context), liveDeclaration + (resume ? resumeDeclaration : '') + source.slice(start, end) + (resume ? `\nreturn resumePendingRelease(${JSON.stringify(prior)}, { verificationOnly: ${verificationOnly} });` : '\nreturn develop("normal", ' + JSON.stringify(previous ? { previous: { id: 'old-run', reason: 'previous evidence missing', ...(previousRecoveryPlan ? { task: { recovery: { plan: { title: 'original approved context' } } } } : {}) } } : {}) + ');'));
     try { const outcome = await run(...Object.values(context)); return { result: outcome, calls, elapsedMs, checkpoint: await context.json(path.join(runDir, 'task.json'), null) }; }
     catch (error) { return { error, calls, checkpoint: await context.json(path.join(runDir, 'task.json'), null) }; }
   } finally {
@@ -186,12 +187,14 @@ test('resumed concluded CI failure is corrected and reviewed before original PR 
   assert.ok(run.calls.some(call => call[0] === 'implement' && call[1].includes('actual resumed test failure')));
   assert.equal(run.calls.filter(call => call[0] === 'review').length, 2);
 });
-test('resumed concluded live verification failure is corrected before original PR release', async () => {
+test('resumed live failure preserves candidate without app regeneration or release', async () => {
   const run = await runScenario({ resume: true, resumeLiveFailure: true });
   assert.equal(run.error, undefined);
-  assert.equal(run.result.pr, 123);
-  assert.equal(run.calls.filter(call => call[0] === 'live-ai').length, 2);
-  assert.ok(run.calls.some(call => call[0] === 'implement' && call[1].includes('live-ai validation failed')));
+  assert.equal(run.result.status, 'awaiting-verification');
+  assert.equal(run.calls.filter(call => call[0] === 'live-ai').length, 1);
+  assert.equal(run.calls.some(call => ['implement', 'release', 'prepareRecovery'].includes(call[0])), false);
+  assert.equal(run.checkpoint.stage, 'live-ai-blocked');
+  assert.equal(run.checkpoint.pr, 123);
 });
 
 test('resumed missing evidence is repaired in the same three-review bound', async () => {
@@ -374,3 +377,26 @@ for (const [outcome, failures, expectedPushes, succeeds] of [
     }
   });
 }
+
+
+test('verification-only PR resume holds concluded CI failure without generation', async () => {
+  const run = await runScenario({ resume: true, resumeCiStatus: 'failed', verificationOnly: true });
+  assert.equal(run.error, undefined);
+  assert.equal(run.result.status, 'awaiting-verification');
+  assert.equal(run.checkpoint.pr, 123);
+  assert.equal(run.checkpoint.stage, 'live-ai-blocked');
+  assert.equal(run.calls.some(call => ['implement', 'release', 'prepareRecovery'].includes(call[0])), false);
+});
+
+test('initial implementation live failure retains complete restart identity and never regenerates', async () => {
+  const run = await runScenario({ resumeLiveFailure: true });
+  assert.equal(run.error, undefined);
+  assert.equal(run.result.status, 'awaiting-verification');
+  assert.equal(run.checkpoint.stage, 'live-ai-blocked');
+  assert.ok(run.checkpoint.result.title);
+  assert.ok(run.checkpoint.branch);
+  assert.equal(run.checkpoint.kind, 'normal');
+  assert.equal(run.checkpoint.verdict.sha, run.checkpoint.sha);
+  assert.equal(run.calls.filter(call => call[0] === 'implement').length, 1);
+  assert.equal(run.calls.some(call => call[0] === 'release'), false);
+});

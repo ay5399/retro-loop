@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { actionScenario } from './live-scenario.mjs';
+import { providerFailure, exhaustedWindow } from './live-verification.mjs';
 const home = process.env.RETRO_AUTOMATION_HOME;
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Live verification requires Node.js 24 or later, matching .nvmrc');
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
@@ -33,6 +34,7 @@ createInterface({ input: proc.stdout }).on('line', line => {
   if (pending.has(msg.id)) { const p = pending.get(msg.id); pending.delete(msg.id); if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result); return; }
   if (msg.id !== undefined) { send({ id: msg.id, error: { code: -32601, message: 'Probe does not execute tools or approval requests' } }); abort(new Error('Unexpected server request')); return; }
   if (!active) return;
+  if (msg.method === 'error' && msg.params?.error && msg.params.willRetry !== true) active.providerError = msg.params.error;
   if (msg.method === 'item/started' && !['userMessage', 'agentMessage', 'reasoning'].includes(msg.params.item?.type)) {
     send({ id: ++id, method: 'turn/interrupt', params: { threadId: active.threadId, turnId: msg.params.turnId } });
     abort(new Error('Tool use is not permitted in this dialogue probe')); return;
@@ -44,7 +46,11 @@ createInterface({ input: proc.stdout }).on('line', line => {
   }
   if (msg.method === 'turn/completed') {
     const current = active; active = null;
-    if (msg.params.turn.status !== 'completed') current.reject(new Error(`Inference did not complete: ${msg.params.turn.status}`));
+    if (msg.params.turn.status !== 'completed') {
+      report.inferenceFailed = true;
+      report.providerFailure = providerFailure(msg.params.turn.error ?? current.providerError);
+      current.reject(new Error(`Inference did not complete: ${msg.params.turn.status}`));
+    }
     else current.resolve({ text: current.text, firstDeltaMs: current.firstDeltaMs, elapsedMs: Date.now() - current.started });
   }
 });
@@ -56,6 +62,8 @@ try {
   const account = (await rpc('account/read', { refreshToken: false })).account;
   report.authType = account?.type; report.planType = account?.planType;
   if (account?.type !== 'chatgpt') throw new Error('Probe requires ChatGPT subscription authentication; API-key auth is not allowed');
+  const exhausted = exhaustedWindow(await rpc('account/rateLimits/read'));
+  if (exhausted) { report.failurePhase = 'preflight'; report.providerFailure = exhausted; throw new Error('ChatGPT usage limit reached; no inference started'); }
   const models = await rpc('model/list', { limit: 100, includeHidden: false });
   const model = models.data?.find(m => m.isDefault) ?? models.data?.[0];
   if (!model) throw new Error('No model returned');
@@ -80,7 +88,17 @@ try {
     for (const input of inputs) report.transcripts.push({ input, ...await complete(input) });
   }
   report.status = 'passed';
-} catch (error) { report.status = 'failed'; report.reason = error.message; process.exitCode = 1; }
+} catch (error) {
+  report.status = 'failed'; report.reason = error.message; process.exitCode = 1;
+  if (report.providerFailure?.category === 'usage-limit') {
+    let refreshTimer;
+    try {
+      const limits = await Promise.race([rpc('account/rateLimits/read'), new Promise((_, reject) => { refreshTimer = setTimeout(() => reject(new Error('Rate-limit refresh timed out')), 3000); })]);
+      report.providerFailure = exhaustedWindow(limits) ?? report.providerFailure;
+    } catch { /* Preserve the known usage-limit failure if refresh is unavailable. */ }
+    finally { clearTimeout(refreshTimer); }
+  }
+}
 finally {
   clearTimeout(timer);
   await writeFile(path.join(dir, 'result.json'), JSON.stringify(report, null, 2) + '\n');
