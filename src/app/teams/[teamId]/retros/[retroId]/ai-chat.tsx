@@ -57,12 +57,13 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
   const pending = useRef<{ id: string; text: string } | null>(null);
   const sending = useRef(false);
   const [failedId, setFailedId] = useState<string | null>(null);
+  const [stopped, setStopped] = useState(false);
   function restoreDraft() {
     if (!pending.current) return;
     setInput(pending.current.text);
     setFailedId(pending.current.id);
   }
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, status, stop } = useChat({
     transport: new CompleteChatTransport({
       api: "/api/chat",
       body: { retroId, teamId },
@@ -71,6 +72,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
     onFinish: ({ isAbort, isDisconnect, isError, finishReason }) => {
       if (isAbort || isDisconnect || isError || finishReason === "error") {
         restoreDraft();
+        setStopped(isAbort);
       } else {
         pending.current = null;
       }
@@ -89,6 +91,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
     // Keep the exact draft for recovery; preserve the existing trimmed payload.
     pending.current = { id, text };
     setFailedId(null);
+    setStopped(false);
     setInput("");
     // Replacing the failed user turn also discards its incomplete response.
     const request = failedId
@@ -203,9 +206,14 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
       </div>
 
       {failedId ? (
-        <p role="alert" data-chat-error className="text-sm text-red-700">
-          AIの応答を完了できませんでした。相談文を入力欄に戻しました。内容を確認・編集して「送信」を押してください。自動では再送しません。
+        <p role={stopped ? "status" : "alert"} data-chat-error className={stopped ? "text-sm text-muted" : "text-sm text-red-700"}>
+          {stopped ? "応答を中止しました。" : "AIの応答を完了できませんでした。"}相談文を入力欄に戻しました。内容を確認・編集して「送信」を押してください。自動では再送しません。
         </p>
+      ) : null}
+      {busy ? (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void stop(); }}>
+          応答を中止
+        </button>
       ) : null}
       <form
         className="flex items-end gap-2"
