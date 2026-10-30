@@ -358,7 +358,8 @@ async function main() {
             }
           }
         }
-        if (prior.task?.stage === 'live-ai-blocked' && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '') && prior.task.liveFailure?.sha === prior.task.sha && (prior.task.verifierRepairAttempts ?? 0) < 3 && prior.task?.liveFailure?.category === 'verification-build' && policy.editableVerificationPaths?.includes('scripts/automation/verify-live-chat-ui.mjs') && prior.task.kind === 'normal' && prior.task.verdict?.verdict === 'approve' && prior.task.verdict?.risk === 'reversible' && !prior.task.pr) {
+        if (prior.task?.stage === 'live-ai-blocked' && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '') && prior.task.liveFailure?.sha === prior.task.sha && (prior.task.verifierRepairAttempts ?? 0) < 3 && !process.argv.includes('--retry-live-verification') && prior.task?.liveFailure?.category === 'verification-build' && policy.editableVerificationPaths?.includes('scripts/automation/verify-live-chat-ui.mjs') && prior.task.kind === 'normal' && prior.task.verdict?.verdict === 'approve' && prior.task.verdict?.risk === 'reversible' && !prior.task.pr) {
+          if (await json(path.join(stateDir, 'halt.json'), null)) throw new Error('Uncertain production state blocks verifier repair.');
           return develop('normal', { previous: prior });
         }
         if (prior.task?.stage === 'live-ai-blocked' || prior.task?.retainedVerification === true) return resumeLiveVerification(prior);

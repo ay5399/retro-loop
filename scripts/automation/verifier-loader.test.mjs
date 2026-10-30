@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadCandidateVerifier } from './verifier-loader.mjs';
@@ -20,5 +20,8 @@ test('candidate verifier executes its own source with controller dependencies, n
     assert.ok(decodeURIComponent(first.root).includes('/controller/'));
     await writeFile(path.join(candidate, 'scripts/automation/verify-live-chat-ui.mjs'), 'export const result = "new reviewed candidate";');
     assert.equal((await loadCandidateVerifier(controller, candidate)).result, 'new reviewed candidate');
+    const linked = path.join(root, 'linked-controller');
+    await symlink(controller, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    assert.equal((await loadCandidateVerifier(linked, candidate)).result, 'new reviewed candidate');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

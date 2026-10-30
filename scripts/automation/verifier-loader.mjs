@@ -1,5 +1,5 @@
 import { registerHooks } from 'node:module';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -9,10 +9,12 @@ import { randomUUID } from 'node:crypto';
 export async function loadCandidateVerifier(repositoryRoot, sourceRoot) {
   const relative = 'scripts/automation/verify-live-chat-ui.mjs';
   const source = await readFile(path.join(sourceRoot, relative), 'utf8');
-  const url = pathToFileURL(path.join(repositoryRoot, relative));
+  const url = pathToFileURL(path.join(await realpath(repositoryRoot), relative));
   url.searchParams.set('candidate', randomUUID());
   const target = url.href;
-  const hooks = registerHooks({ load(url, context, nextLoad) {
+  const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
+    return specifier === target ? { url: target, shortCircuit: true } : nextResolve(specifier, context);
+  }, load(url, context, nextLoad) {
     return url === target ? { format: 'module', source, shortCircuit: true } : nextLoad(url, context);
   } });
   try { return await import(target); }
