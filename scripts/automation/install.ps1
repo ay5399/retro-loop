@@ -35,7 +35,7 @@ foreach ($name in @('claude', 'gh', 'git')) {
 $encoding = New-Object System.Text.UTF8Encoding($false)
 $installation = @{ repositoryPath = $repositoryPath; commands = $commands }
 [IO.File]::WriteAllText((Join-Path $statePath 'installation.json'), ($installation | ConvertTo-Json -Depth 8), $encoding)
-foreach ($file in @('core.mjs', 'github-app.mjs', 'workflow.mjs', 'candidate.mjs', 'evidence.mjs', 'history.mjs', 'budget.mjs')) {
+foreach ($file in @('core.mjs', 'github-app.mjs', 'workflow.mjs', 'candidate.mjs', 'evidence.mjs', 'history.mjs', 'budget.mjs', 'live-verification.mjs')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $statePath "runtime/$file") -Force
 }
 foreach ($file in @('policy.json', 'plan.schema.json', 'result.schema.json', 'review.schema.json')) {

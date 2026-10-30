@@ -5,12 +5,26 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { inspectPreviousRun, reconcileStartup } from './history.mjs';
+import { liveRetryAllowed } from './live-verification.mjs';
 
 const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
 const start = source.indexOf('  const previous = policy.startupRecovery');
 const end = source.indexOf('  const tracking =', start);
 assert.ok(start >= 0 && end > start, 'Actual main startup recovery markers must exist');
 const startupSource = source.slice(start, end);
+
+test('three startups preserve live-blocked SHA without entering planning', async () => scenario(async ({ add, launch, json, save }) => {
+  const task = { kind: 'normal', stage: 'live-ai-blocked', branch: 'auto/normal-retained', sha: 'a'.repeat(40), liveFailure: { category: 'verification-unresolved' } };
+  await add('2026-10-25-5', { status: 'awaiting-verification' }, task);
+  for (const id of ['2026-10-25-13', '2026-10-25-21', '2026-10-26-5']) {
+    const runDir = await add(id);
+    await assert.rejects(launch(runDir, () => assert.fail('must not generate'), () => assert.fail('must not resume another release'), [], { liveRetryAllowed, process: { exitCode: 0, argv: [] } }), /unresolved/);
+    assert.equal((await json(path.join(runDir, 'result.json'))).status, 'awaiting-verification');
+    const retained = await json(path.join(runDir, 'task.json'));
+    assert.equal(retained.sha, task.sha);
+    assert.equal(retained.stage, task.stage);
+  }
+}));
 const uncertaintySource = source.slice(source.indexOf('async function reconcileUncertainTask('), source.indexOf('async function main()'));
 assert.ok(startupSource.includes('await reconcileStartup'), 'Actual startup must execute the reconciliation helper');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

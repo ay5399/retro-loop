@@ -31,7 +31,9 @@ export function createFixtureChatStream({ complete, input, report }) {
     const id = `${messageId}-text`;
     writer.write({ type: 'start', messageId });
     writer.write({ type: 'text-start', id });
-    const output = await complete(input, delta => writer.write({ type: 'text-delta', id, delta }));
+    let output;
+    try { output = await complete(input, delta => writer.write({ type: 'text-delta', id, delta })); }
+    catch (error) { report.inferenceFailed = true; throw error; }
     report.transcripts.push({ input, ...output });
     writer.write({ type: 'text-end', id });
     writer.write({ type: 'finish', finishReason: 'stop' });

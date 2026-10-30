@@ -9,6 +9,7 @@ import { dispatchWorkflow } from './workflow.mjs';
 import { collectEvidence } from './evidence.mjs';
 import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, recoveryVerificationEvidence } from './candidate.mjs';
 import { inspectPreviousRun, reconcileStartup } from './history.mjs';
+import { liveRetryAllowed } from './live-verification.mjs';
 import { generationBudget, taskAdmissionBudget, TASK_TIMING } from './budget.mjs';
 
 const stateDir = process.env.RETRO_AUTOMATION_HOME;
@@ -146,6 +147,78 @@ async function reconcileUncertainTask(previous) {
   await save(path.join(runDir, 'task.json'), corrected);
   return { previous: { ...previous, task: corrected, reason: `${previous.reason}; reconciled original infrastructure: ${JSON.stringify(proof)}` } };
 }
+async function verifyLiveCandidate(dir, sha, tag, task) {
+  const outputDir = path.join(runDir, tag);
+  try {
+    if (policy.liveAiVerification?.enabled !== true) throw new Error('Required live verification is disabled');
+    await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--expected-sha', sha, '--output-dir', outputDir], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: TASK_TIMING.liveAiMs, log: path.join(runDir, `${tag}.log`) });
+    const live = await json(path.join(outputDir, 'result.json'), {});
+    if (live.sha !== sha || live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Live browser verification did not pass on the exact candidate');
+  } catch (error) {
+    let live;
+    try { live = await json(path.join(outputDir, 'result.json'), {}); } catch { live = {}; }
+    const liveFailure = live.sha === sha && live.providerFailure || { category: 'verification-unresolved' };
+    await save(path.join(runDir, 'task.json'), { ...task, sha, stage: 'live-ai-blocked', liveFailure, reason: error.message });
+    error.liveVerificationBlocked = true;
+    throw error;
+  }
+}
+
+// Continue verification of a retained candidate. This function cannot generate code.
+async function resumeLiveVerification(previous) {
+  let task = previous.task;
+  const hold = async reason => {
+    await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked', reason });
+    return { status: 'awaiting-verification', reason };
+  };
+  if (!liveRetryAllowed(task, { manual: process.argv.includes('--retry-live-verification') })) return hold('Live verification needs diagnosis or its recorded reset time; candidate retained without generation.');
+  if (!/^auto\/(normal|mutation)-[a-z0-9-]+$/i.test(task.branch ?? '') || !/^[a-f0-9]{40}$/.test(task.sha ?? '') || !task.result) return hold('Invalid retained live-verification identity.');
+  if (task.pr) return resumePendingRelease(previous);
+  const dir = await workspace(task.branch, true);
+  return withWorkspace(dir, async () => {
+    if (await git(['rev-parse', 'HEAD'], dir) !== task.sha || await git(['status', '--porcelain'], dir)) return hold('Retained candidate changed; diagnosis required before any retry.');
+    const originalSha = task.sha;
+    await git(['fetch', 'origin', 'main'], dir);
+    try { await git(['rebase', 'origin/main'], dir); }
+    catch (error) {
+      await git(['rebase', '--abort'], dir);
+      return hold(`Retained candidate needs conflict diagnosis; no generation: ${error.message}`);
+    }
+    const sha = await git(['rev-parse', 'HEAD'], dir);
+    if (sha !== task.sha) {
+      task = { ...task, sha, verdict: await review(dir, sha, task.result) };
+      await save(path.join(runDir, 'task.json'), { ...task, stage: 'live-ai-blocked' });
+    }
+    const files = (await git(['diff', 'origin/main...HEAD', '--name-only', '-z'], dir)).split('\0').filter(Boolean);
+    if (!files.length || changedPathsBlocked(files, policy).length) return hold('Retained candidate has no allowed diff.');
+    assertCandidateValid([...(await validateCandidateTextFiles(dir, files)), ...validateCandidateDiff(await git(['diff', 'origin/main...HEAD'], dir))]);
+    requireReview(task.verdict, task.sha);
+    if (task.result.risk !== 'reversible' || task.verdict.risk !== 'reversible') return hold('Retained candidate requires owner approval.');
+    const checkpoint = { ...task, liveVerificationRetries: (task.liveVerificationRetries ?? 0) + 1, previousRun: previous.id };
+    await save(path.join(runDir, 'task.json'), checkpoint);
+    try { await verifyLiveCandidate(dir, task.sha, 'retained-live-ai', checkpoint); }
+    catch (error) { if (error.liveVerificationBlocked) return { status: 'awaiting-verification', reason: error.message }; throw error; }
+    // Persist a non-generating recovery stage before any external write.
+    await save(path.join(runDir, 'task.json'), { ...checkpoint, stage: 'live-ai-blocked', liveFailure: { category: 'verification-unresolved' }, reason: 'Live passed; publishing/CI must be reconciled without code generation if interrupted.' });
+    const remoteRef = `refs/heads/${task.branch}`;
+    const remoteHead = (await git(['ls-remote', '--heads', 'origin', remoteRef], dir)).trim().split(/\s+/)[0] || '';
+    if (remoteHead && remoteHead !== task.sha && remoteHead !== originalSha) return hold('Remote candidate changed; no push or generation.');
+    if (remoteHead !== task.sha) await git(remoteHead ? ['push', `--force-with-lease=${remoteRef}:${remoteHead}`, 'origin', `HEAD:${task.branch}`] : ['push', '-u', 'origin', task.branch], dir);
+    await checks(dir, 'retained-candidate');
+    const evidence = await collectEvidence({ dir, runDir, kind: 'retained-candidate', screenshots: task.result.screenshots });
+    // Recover an acknowledged PR rather than creating duplicates after interruption.
+    const prs = JSON.parse(await gh(['pr', 'list', '--repo', policy.repository, '--head', task.branch, '--state', 'all', '--json', 'number,state,headRefOid']));
+    if (prs.length > 1 || prs.some(pr => pr.state !== 'OPEN' || pr.headRefOid !== task.sha)) return hold('Prior PR is ambiguous or changed; no replacement PR.');
+    const bodyFile = path.join(runDir, 'retained-pr.md');
+    await writeFile(bodyFile, `${task.result.summary}\n\nRecurrence prevention: ${task.result.prevention}\n\nRetained reviewed SHA: ${task.sha}. Live UI, hosted CI and screenshots passed; no regeneration.\n`);
+    const pr = prs[0]?.number ?? Number((await gh(['pr', 'create', '--repo', policy.repository, '--head', task.branch, '--base', 'main', '--title', `[normal] ${task.result.title}`, '--body-file', bodyFile])).split('/').at(-1));
+    if (!Number.isSafeInteger(pr) || pr <= 0) throw new Error('Invalid retained PR identity');
+    await save(path.join(runDir, 'task.json'), { ...checkpoint, pr, stage: 'release', remoteBranch: task.branch, remoteHeadSha: task.sha });
+    const released = await release(dir, task.sha, pr, task.issue);
+    return { status: released === false ? 'awaiting-release-conditions' : 'released', sha: task.sha, pr, prevention: task.result.prevention, evidence };
+  });
+}
+
 async function main() {
   // Carry unfinished identity before auth, audit or repository safety gates can
   // stop this launch. Those gates must never erase an earlier approval boundary.
@@ -235,6 +308,20 @@ async function main() {
         const reconciliation = await reconcileUncertainTask(prior);
         if (!reconciliation.previous) return reconciliation;
         prior = reconciliation.previous;
+        // Migrate only the new checkpoint, never rewrite historical failures.
+        // Older runners marked a failed live probe as an app defect.
+        if (['review', 'needs-fix'].includes(prior.task?.stage) && /^[a-f0-9]{40}$/.test(prior.task.sha ?? '')) {
+          for (const tag of ['normal', 'normal-recovery', 'mutation', 'mutation-recovery']) {
+            let live;
+            try { live = await json(path.join(prior.dir, `${tag}-live-ai-${prior.task.attempt}/result.json`), {}); } catch { continue; }
+            if (live.sha === prior.task.sha && live.status === 'failed') {
+              prior = { ...prior, task: { ...prior.task, stage: 'live-ai-blocked', liveFailure: live.providerFailure ?? { category: 'verification-unresolved' } } };
+              await save(path.join(runDir, 'task.json'), prior.task);
+              break;
+            }
+          }
+        }
+        if (prior.task?.stage === 'live-ai-blocked') return resumeLiveVerification(prior);
         return ['awaiting-release', 'awaiting-release-conditions'].includes(prior.result?.status) || ['release', 'awaiting-release', 'awaiting-release-conditions'].includes(prior.task?.stage) ? resumePendingRelease(prior) : develop(prior.task?.kind === 'mutation' ? 'mutation' : 'normal', { previous: prior });
       },
       record: state => save(path.join(runDir, 'startup-recovery.json'), { ...state, checkedAt: new Date().toISOString() }),
@@ -259,8 +346,8 @@ async function main() {
   let adopted = false;
   const outcomes = recovered ? [{ ...recovered, phase: 'previous-run-repair', previousRun: previous.id }] : [];
   const admissionCiMs = recovered?.ciEstimateMs ?? TASK_TIMING.minCiMs;
-  const deferCurrent = !taskAdmissionBudget({ deadline, now: Date.now(), mode: 'normal', ciMs: admissionCiMs }).admitted;
-  if (deferCurrent) outcomes.push({ status: 'deferred', phase: 'current', reason: 'Insufficient time remains to safely start and release a new improvement after baseline, planning, independent review and verification in this 90-minute run.', ciEstimateMs: admissionCiMs });
+  const deferCurrent = Boolean(recovered) || process.argv.includes('--recover-only') || !taskAdmissionBudget({ deadline, now: Date.now(), mode: 'normal', ciMs: admissionCiMs }).admitted;
+  if (deferCurrent) outcomes.push({ status: 'deferred', phase: 'current', reason: recovered ? 'This execution completed recovery; start no new improvement in the same run.' : process.argv.includes('--recover-only') ? 'Explicit recovery-only execution; no new improvement.' : 'Insufficient time remains to safely start and release a new improvement in this 90-minute run.', ciEstimateMs: admissionCiMs });
   for (const exp of tracking.experiments.filter(e => !deferCurrent && e.status === 'pending')) {
     const comments = (await api(`repos/${policy.repository}/issues/${exp.issue}/comments`)).flat();
     if (!approvalMatches(comments, policy.owner, exp.id, exp.sha)) continue;
@@ -274,7 +361,7 @@ async function main() {
     catch (error) { outcomes.push({ status: 'failed', reason: error.message }); await note(`通常改善を停止しました。\n\n${error.message}`); }
   }
   const mutationBudget = taskAdmissionBudget({ deadline, now: Date.now(), mode: 'mutation', ciMs: outcomes.findLast(outcome => Number.isFinite(outcome?.ciEstimateMs))?.ciEstimateMs ?? admissionCiMs });
-  const mutationDueNow = !deferCurrent && !outcomes.some(outcome => ['failed', 'awaiting-release', 'awaiting-release-conditions', 'awaiting-approval'].includes(outcome?.status)) && runId.endsWith('-5') && mutationDue(tracking.lastMutationDate, now);
+  const mutationDueNow = !deferCurrent && !outcomes.some(outcome => ['awaiting-verification', 'failed', 'awaiting-release', 'awaiting-release-conditions', 'awaiting-approval'].includes(outcome?.status)) && runId.endsWith('-5') && mutationDue(tracking.lastMutationDate, now);
   if (mutationDueNow && !mutationBudget.admitted) outcomes.push({ status: 'deferred', phase: 'mutation', reason: `Insufficient time before baseline: ${mutationBudget.remainingMs}ms remain; ${mutationBudget.requiredMs}ms required for baseline, up to three plan reviews, implementation, verification and Draft PR.` });
   if (mutationDueNow && mutationBudget.admitted) {
     try {
@@ -288,6 +375,7 @@ async function main() {
   await save(path.join(runDir, 'result.json'), result);
   console.log(JSON.stringify(result));
   if (status === 'failed') process.exitCode = 1;
+  else if (status === 'awaiting-verification') process.exitCode = 2;
 }
 async function workspace(branch, existing = false) {
   const dir = path.join(stateDir, 'worktrees', branch.replaceAll('/', '-'));
@@ -433,12 +521,7 @@ async function resumePendingRelease(previous) {
     if (verdict.risk !== 'reversible' || task.result.risk !== 'reversible') throw new Error('Previous release now requires owner approval.');
     let validationStage = 'live-ai', currentRemoteHead = info.headRefOid, evidence;
     try {
-    if (needsLiveAiVerification(files)) {
-      if (policy.liveAiVerification?.enabled !== true) throw new Error('Live AI verification is required before resuming this release.');
-      await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--expected-sha', sha, '--output-dir', path.join(runDir, 'resumed-live-ai')], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: TASK_TIMING.liveAiMs, log: path.join(runDir, 'resumed-live-ai.log') });
-      const live = await json(path.join(runDir, 'resumed-live-ai/result.json'), {});
-      if (live.sha !== sha || live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Resumed release live AI verification failed.');
-    }
+    if (needsLiveAiVerification(files)) await verifyLiveCandidate(dir, sha, 'resumed-live-ai', { ...task, sha, verdict });
     validationStage = 'push';
     const remoteBranch = task.remoteBranch ?? task.branch;
     if (sha !== info.headRefOid) await git(['push', `--force-with-lease=refs/heads/${remoteBranch}:${info.headRefOid}`, 'origin', `HEAD:${remoteBranch}`], dir);
@@ -449,6 +532,7 @@ async function resumePendingRelease(previous) {
     validationStage = 'evidence';
     evidence = await collectEvidence({ dir, runDir, kind: 'resumed-release', screenshots: task.result.screenshots });
     } catch (error) {
+      if (error.liveVerificationBlocked) return { status: 'awaiting-verification', reason: error.message };
       // A transient/unknown dispatch or push outcome is not evidence authorizing a
       // code rewrite. Only concluded validation failures enter the correction loop.
       const ci = validationStage === 'ci' ? await json(path.join(runDir, 'resumed-release-ci.json'), {}) : null;
@@ -632,12 +716,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
         // Review before publishing and executing the candidate in GitHub Actions.
         verdict = await review(dir, sha, { ...result, approvedPlan: plan }, { attempt });
         requireReview(verdict, sha);
-        if (needsLiveAiVerification(files)) {
-          if (policy.liveAiVerification?.enabled !== true) throw new Error('Live AI UI verification is required for this change but is not enabled');
-          await command('node', [path.join(config.repositoryPath, 'scripts/automation/probe-codex-ai.mjs'), '--browser', '--source', dir, '--expected-sha', sha, '--output-dir', path.join(runDir, `${taskTag}-live-ai-${attempt}`)], { env: safeEnv({ RETRO_AUTOMATION_HOME: stateDir }), timeout: TASK_TIMING.liveAiMs, log: path.join(runDir, `${taskTag}-live-ai-${attempt}.log`) });
-          const live = await json(path.join(runDir, `${taskTag}-live-ai-${attempt}/result.json`), {});
-          if (live.sha !== sha || live.status !== 'passed' || live.browser?.status !== 'passed') throw new Error('Live AI browser verification failed');
-        }
+        if (needsLiveAiVerification(files)) await verifyLiveCandidate(dir, sha, `${taskTag}-live-ai-${attempt}`, { ...checkpoint, verdict });
         validationStage = 'publishing';
         const target = existingRelease ? checkpoint.remoteBranch : branch;
         const remoteRef = `refs/heads/${target}`;
@@ -664,6 +743,7 @@ async function develop(kind, { previous, existingRelease } = {}) {
         await recordTask({ stage: 'validated', sha, result, verdict, evidence });
         break;
       } catch (error) {
+        if (error.liveVerificationBlocked) return { status: 'awaiting-verification', sha, reason: error.message };
         if (validationStage === 'publishing' || validationStage === 'ci' && (await json(path.join(runDir, `${taskTag}-after-${attempt}-ci.json`), {})).status !== 'failed') {
           const stage = validationStage === 'publishing' ? 'publishing-uncertain' : 'validation-uncertain';
           await recordTask({ stage, sha, result, attempt, reason: error.message, verdict });
