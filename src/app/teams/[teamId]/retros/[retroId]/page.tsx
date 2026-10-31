@@ -80,7 +80,7 @@ export default async function RetrospectivePage({
 
         <section className="w-full max-w-3xl space-y-3">
           <p className="eyebrow">AIアシスタント</p>
-          <AiChat teamId={teamId} retroId={retroId} ownProblems={retro.notes
+          <AiChat teamId={teamId} retroId={retroId} userId={user.id} ownProblems={retro.notes
             .filter((n) => n.kind === "PROBLEM" && n.authorId === user.id)
             .map((n) => ({ id: n.id, content: n.content }))} />
         </section>

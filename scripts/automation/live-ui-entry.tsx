@@ -15,7 +15,7 @@ function Fixture() {
     <p>架空データ・保存先は検証ブラウザー内。本番DB・認証は使用しません。</p>
     <KptBoardClient teamId="live-fixture" retroId="live-fixture" notes={notes} votesUsed={0} groups={[]} />
     <h2>AIアシスタント</h2>
-    <AiChat teamId="live-fixture" retroId="live-fixture" />
+    <AiChat teamId="live-fixture" retroId="live-fixture" userId="live-fixture-user" />
   </main>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);
