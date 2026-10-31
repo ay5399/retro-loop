@@ -48,9 +48,10 @@ const TOOL_LABELS: Record<string, string> = {
   flagRecurringIssues: "前回までの積み残しを確認中…",
 };
 
-export function AiChat({ teamId, retroId, ownProblems = [] }: {
+export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
   teamId: string;
   retroId: string;
+  userId: string;
   ownProblems?: { id: string; content: string }[];
 }) {
   const [input, setInput] = useState("");
@@ -249,7 +250,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
           {busy ? "応答中…" : "送信"}
         </button>
       </form>
-      <OwnTryConfirmation teamId={teamId} retroId={retroId} />
+      <OwnTryConfirmation teamId={teamId} retroId={retroId} userId={userId} />
     </div>
   );
 }
