@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadCandidateVerifier } from './verifier-loader.mjs';
+import { loadCandidateVerifier, loadCandidateScenario } from './verifier-loader.mjs';
 
 test('candidate verifier executes its own source with controller dependencies, never the stale checkout source', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'retro-verifier-loader-'));
@@ -23,5 +23,8 @@ test('candidate verifier executes its own source with controller dependencies, n
     const linked = path.join(root, 'linked-controller');
     await symlink(controller, linked, process.platform === 'win32' ? 'junction' : 'dir');
     assert.equal((await loadCandidateVerifier(linked, candidate)).result, 'new reviewed candidate');
+    await writeFile(path.join(controller, 'scripts/automation/live-scenario.mjs'), 'throw new Error("stale scenario");');
+    await writeFile(path.join(candidate, 'scripts/automation/live-scenario.mjs'), 'export const actionScenario = () => ({ inputs: ["one", "two", "three"] });');
+    assert.deepEqual((await loadCandidateScenario(linked, candidate)).actionScenario().inputs, ['one', 'two', 'three']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

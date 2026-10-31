@@ -59,10 +59,27 @@ async function fixture(run) {
     const context = { path, stateDir, runDir, readdir, lstat, readFile, writeFile, rm, randomBytes, git, changedPathsBlocked, policy: { protectedPaths: ['scripts/**'] }, json: async (file, fallback) => { try { return JSON.parse(await readFile(file, 'utf8')); } catch { return fallback; } } };
     const prepare = new AsyncFunction(...Object.keys(context), `${source.slice(start, end)}; return prepareRecovery;`);
     const prepareRecovery = await prepare(...Object.values(context));
-    await run({ root, original, fresh, calls, git, prepareRecovery, previous: { id: 'previous', dir: runDir, reason: 'failed', task: { branch, plan: { title: 'preserved approved plan' } } } });
+    await run({ root, original, fresh, calls, git, prepareRecovery, policy: context.policy, previous: { id: 'previous', dir: runDir, reason: 'failed', task: { branch, plan: { title: 'preserved approved plan' } } } });
     assert.deepEqual((await readdir(runDir)).filter(name => /\.index(?:\.lock)?$/.test(name)), []);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('authorized business actions and fixture support survive the real recovery transfer with original history intact', async () => fixture(async ({ original, fresh, git, prepareRecovery, previous, policy }) => {
+  Object.assign(policy, JSON.parse(await readFile(new URL('../../automation/policy.json', import.meta.url), 'utf8')));
+  const files = ['src/app/teams/example/actions.ts', 'src/app/api/example/route.ts', 'e2e/helpers.ts', 'scripts/automation/live-ui-store.ts'];
+  for (const file of files) {
+    await mkdir(path.dirname(path.join(original, file)), { recursive: true });
+    await writeFile(path.join(original, file), `// authorized repair: ${file}\n`);
+  }
+  const originalStatus = await git(['status', '--porcelain'], original);
+  const originalSha = await git(['rev-parse', 'HEAD'], original);
+  const outcome = await prepareRecovery(previous, fresh);
+  assert.equal(outcome.transferredPatch, true);
+  assert.equal(outcome.applyProblem, undefined);
+  for (const file of files) assert.equal(await readFile(path.join(fresh, file), 'utf8'), await readFile(path.join(original, file), 'utf8'));
+  assert.equal(await git(['status', '--porcelain'], original), originalStatus);
+  assert.equal(await git(['rev-parse', 'HEAD'], original), originalSha);
+}));
 
 test('recovery transfers committed, dirty, and untracked candidate files onto current main without reverting controller fixes', async () => fixture(async ({ original, fresh, git, prepareRecovery, previous }) => {
   const originalSha = await git(['rev-parse', 'HEAD'], original);

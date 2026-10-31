@@ -1,5 +1,6 @@
 // Store allowlisted diagnostics only: upstream messages may contain account data.
 export function boundedCompletion({ inputs, signal, expiresAt, run }) {
+  if (!Array.isArray(inputs) || inputs.length !== 3 || inputs.some(input => typeof input !== 'string' || !input.trim())) throw new Error('The synthetic scenario must contain exactly three text turns');
   const expected = [...inputs];
   let requested = 0, completed = 0, busy = false, failure;
   return {

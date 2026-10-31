@@ -18,6 +18,7 @@ export function policyHash(policy, stage = 'release') {
   // Product copy and scheduling do not change a provider's billing settings.
   const fields = ['repository', 'owner', 'monthlyLimitYen', 'operatingLimitYen', 'allowPaidUsage', 'githubAuth', 'requireDedicatedWindowsUser', 'services', 'protectedPaths'];
   if (policy.editableVerificationPaths !== undefined) fields.push('editableVerificationPaths');
+  if (policy.editableCodeScopes !== undefined) fields.push('editableCodeScopes');
   return createHash('sha256').update(JSON.stringify({ stage, ...Object.fromEntries(fields.map(key => [key, policy[key]])) })).digest('hex');
 }
 export function auditProblems(policy, audit, now = new Date(), stage = 'release') {
@@ -65,16 +66,20 @@ export function approvalMatches(comments, owner, id, sha) {
 }
 export function changedPathsBlocked(paths, policy) {
   return paths.filter(original => {
+    if (original.includes('\\') || original.split('/').some(part => !part || part === '.' || part === '..') || /^[A-Za-z]:/.test(original)) return true;
     const p = original.toLowerCase();
-    if (original === 'scripts/automation/verify-live-chat-ui.mjs' && policy.editableVerificationPaths?.includes(original)) return false;
-    return !/^(src\/|public\/|e2e\/|docs\/|readme\.md$)/.test(p) || /(?:^|\/)(?:actions|route|middleware|proxy|instrumentation)\.[cm]?[jt]sx?$/.test(p) || ['src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/autonomous_improvement.md'].includes(p) || policy.protectedPaths.some(prefix => p.startsWith(prefix.toLowerCase()));
+    const fixture = /^scripts\/automation\/(?:verify-live-chat-ui(?:\.test)?\.mjs|live-ui-(?:entry\.tsx|store\.ts)|live-scenario\.mjs)$/.test(original);
+    if (fixture && policy.editableVerificationPaths?.includes(original)) return false;
+    const applicationServer = policy.editableCodeScopes?.includes('application-server') && p.startsWith('src/');
+    const testSupport = policy.editableCodeScopes?.includes('test-support');
+    return !/^(src\/|public\/|e2e\/|docs\/|readme\.md$)/.test(p) || /(?:^|\/)(?:middleware|proxy|instrumentation)\.[cm]?[jt]sx?$/.test(p) || (!applicationServer && /(?:^|\/)(?:actions|route)\.[cm]?[jt]sx?$/.test(p)) || ['src/lib/prisma.ts', 'docs/autonomous_improvement.md', ...(!testSupport ? ['e2e/helpers.ts'] : [])].includes(p) || policy.protectedPaths.some(prefix => p.startsWith(prefix.toLowerCase()));
   });
 }
 export function requireReview(review, sha) {
   if (review.sha !== sha || review.verdict !== 'approve' || !review.reason?.trim()) throw new Error('Claude did not approve this exact commit.');
 }
 export function needsLiveAiVerification(paths) {
-  return paths.some(p => p.startsWith('src/app/teams/[teamId]/retros/[retroId]/') || p.startsWith('src/components/') || p.startsWith('src/hooks/') || p.startsWith('src/lib/') || p === 'src/app/globals.css' || p === 'src/app/api/chat/route.ts' || /^scripts\/automation\/(?:probe-codex-ai|verify-live-chat-ui|live-ui-)/.test(p));
+  return paths.some(p => p.startsWith('src/app/teams/[teamId]/retros/[retroId]/') || p.startsWith('src/components/') || p.startsWith('src/hooks/') || p.startsWith('src/lib/') || p === 'src/app/globals.css' || p === 'src/app/api/chat/route.ts' || /^scripts\/automation\/(?:probe-codex-ai|verify-live-chat-ui|live-ui-|live-scenario)/.test(p));
 }
 // Reserve the worst-case cost BEFORE a call; unknown costs never become free.
 export function reserve(ledger, id, maxYen, policy) {

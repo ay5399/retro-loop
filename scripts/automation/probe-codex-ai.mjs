@@ -4,9 +4,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { actionScenario } from './live-scenario.mjs';
 import { providerFailure, exhaustedWindow, boundedCompletion } from './live-verification.mjs';
-import { loadCandidateVerifier } from './verifier-loader.mjs';
+import { loadCandidateVerifier, loadCandidateScenario } from './verifier-loader.mjs';
 const home = process.env.RETRO_AUTOMATION_HOME;
 if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Live verification requires Node.js 24 or later, matching .nvmrc');
 if (!home) throw new Error('Set RETRO_AUTOMATION_HOME');
@@ -71,6 +70,7 @@ try {
   report.model = model.model ?? model.id;
   const thread = await rpc('thread/start', { model: report.model, cwd: dir, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: true,
     baseInstructions: 'あなたはレトロ（ふりかえり）を支援するアシスタントです。対象のふりかえり: 検証用。今回のKPT付箋: [Problem] コードレビューの待ち時間が長い。チームの助言・質問対応を日本語で簡潔に行ってください。ツールやファイルは一切使わず、ユーザーに返す対話文だけを出力してください。これは実データを含まない対話の検証です。\n' + ACTION_GUIDANCE });
+  const { actionScenario } = await loadCandidateScenario(installation.repositoryPath, sourceRoot);
   const { inputs, saved, date } = actionScenario();
   report.scenarioDate = date;
   const { complete, assertComplete } = boundedCompletion({ inputs, signal: controller.signal, expiresAt, run: async (input, onDelta) => {
