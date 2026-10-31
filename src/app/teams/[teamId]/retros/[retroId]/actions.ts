@@ -34,7 +34,8 @@ export async function addNote(
   const user = await requireUser();
   await assertRetroAccess(teamId, retroId, user.id);
 
-  const content = String(formData.get("content") ?? "").trim();
+  // Multipart FormData serializes line endings as CRLF; persist the UI's LF text.
+  const content = String(formData.get("content") ?? "").replace(/\r\n?/g, "\n").trim();
   if (!content) return;
 
   await prisma.note.create({
