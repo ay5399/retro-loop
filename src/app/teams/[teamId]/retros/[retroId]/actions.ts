@@ -52,7 +52,8 @@ export async function updateNote(
   formData: FormData,
 ) {
   const user = await requireUser();
-  const content = String(formData.get("content") ?? "").trim();
+  // Keep edited text in the same LF format as newly added notes.
+  const content = String(formData.get("content") ?? "").replace(/\r\n?/g, "\n").trim();
   if (!content) return;
 
   await prisma.note.updateMany({
