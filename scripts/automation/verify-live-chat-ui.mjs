@@ -66,6 +66,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
     b.onLoad({ filter: /.*/ }, async args => {
       const file = await realpath(args.path);
       if (!file.startsWith(sourceDir + path.sep) && !file.startsWith(modulesDir + path.sep) && !fixtureFiles.includes(file)) throw new Error('Browser bundle attempted to read outside source, dependencies or fixture');
+      if (fixtureFiles.includes(file)) return { contents: await readFile(path.join(sourceRoot, 'scripts/automation', path.basename(file)), 'utf8'), loader: file.endsWith('.tsx') ? 'tsx' : 'ts' };
       return undefined;
     });
   } }] });

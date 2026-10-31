@@ -7,7 +7,15 @@ import { randomUUID } from 'node:crypto';
 // Execute the reviewed candidate source with the controller's installed dependencies
 // and fixture paths. Candidate worktrees intentionally contain only static SDK docs.
 export async function loadCandidateVerifier(repositoryRoot, sourceRoot) {
-  const relative = 'scripts/automation/verify-live-chat-ui.mjs';
+  return loadCandidateModule(repositoryRoot, sourceRoot, 'verify-live-chat-ui.mjs');
+}
+
+export async function loadCandidateScenario(repositoryRoot, sourceRoot) {
+  return loadCandidateModule(repositoryRoot, sourceRoot, 'live-scenario.mjs');
+}
+
+async function loadCandidateModule(repositoryRoot, sourceRoot, name) {
+  const relative = `scripts/automation/${name}`;
   const source = await readFile(path.join(sourceRoot, relative), 'utf8');
   const url = pathToFileURL(path.join(await realpath(repositoryRoot), relative));
   url.searchParams.set('candidate', randomUUID());

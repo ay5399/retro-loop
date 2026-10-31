@@ -8,6 +8,15 @@ import { promisify } from 'node:util';
 import { validateCandidateTextFiles, validateCandidateDiff, assertCandidateValid, requireImplementationSandbox, recoveryVerificationEvidence } from './candidate.mjs';
 const diff = (text, file = 'e2e/chat.spec.ts') => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +12,1 @@\n+${text}\n`;
 
+test('authorized application server directives pass while credential, network and test bypass checks stay active', () => {
+  const policy = { editableCodeScopes: ['application-server', 'test-support'] };
+  assert.deepEqual(validateCandidateDiff(diff('"use server";', 'src/app/example/actions.ts'), policy), []);
+  assert.ok(validateCandidateDiff(diff('"use server";', 'src/app/example/actions.ts')).length);
+  assert.ok(validateCandidateDiff(diff('"use server";', 'e2e/helpers.ts'), policy).length);
+  for (const text of ['const token = process.env.TOKEN;', 'fetch("https://example.com");']) assert.ok(validateCandidateDiff(diff(text, 'src/app/example/actions.ts'), policy).length);
+  assert.ok(validateCandidateDiff(diff('test.skip("disabled", () => {});'), policy).length);
+});
+
 const launch = mode => `OpenAI Codex v0.163.0\n--------\nworkdir: test\nmodel: test\napproval: never\nsandbox: ${mode}\nsession id: current\n--------\n`;
 
 test('verification evidence is from the committed clean revision and rejects dirty working content', async () => {

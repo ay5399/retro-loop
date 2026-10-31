@@ -85,8 +85,19 @@ test('owner can waive Windows-user isolation without waiving bot or billing chec
 test('autonomous edits cannot change policy, authentication, migrations or workflows', () => {
   assert.deepEqual(changedPathsBlocked(['src/components/loop.tsx', 'docs/UI_GUIDELINES.md'], policy), []);
   assert.equal(changedPathsBlocked(['automation/policy.json', 'src/auth.ts', '.github/workflows/ci.yml', 'prisma/schema.prisma', 'package.json'], policy).length, 5);
-  assert.equal(changedPathsBlocked(['CLAUDE.md', 'src/instrumentation.ts', 'src/lib/prisma.ts', 'e2e/helpers.ts', 'docs/AUTONOMOUS_IMPROVEMENT.md'], policy).length, 5);
+  assert.equal(changedPathsBlocked(['CLAUDE.md', 'src/instrumentation.ts', 'src/lib/prisma.ts', 'docs/AUTONOMOUS_IMPROVEMENT.md'], policy).length, 4);
   assert.equal(changedPathsBlocked(['lib/external.ts'], policy).length, 1);
+});
+
+test('application and fixture scopes apply consistently across business server code and test support', () => {
+  const allowed = ['src/app/teams/new/actions.ts', 'src/app/api/example/route.ts', 'src/app/api/chat/route.ts', 'src/lib/llm/chat-guidance.ts', 'src/lib/llm/retro-tools.ts', 'src/lib/llm/reflection.ts', 'e2e/helpers.ts', ...policy.editableVerificationPaths];
+  assert.deepEqual(changedPathsBlocked(allowed, policy), []);
+  const protectedFiles = ['src/auth.ts', 'src/app/api/auth/[...nextauth]/route.ts', 'src/app/api/health/route.ts', 'src/lib/service-policy.ts', 'src/lib/llm/gemini.ts', 'src/lib/llm/index.ts', 'src/lib/prisma.ts', 'src/proxy.ts', 'automation/policy.json', 'scripts/automation/run.mjs', '.github/workflows/ci.yml', 'prisma/schema.prisma', 'src/app/../auth.ts', 'src\\auth.ts'];
+  assert.deepEqual(changedPathsBlocked(protectedFiles, policy), protectedFiles);
+  const disabled = { ...policy, editableCodeScopes: [] };
+  assert.equal(changedPathsBlocked(['src/app/example/actions.ts', 'src/app/api/example/route.ts', 'e2e/helpers.ts'], disabled).length, 3);
+  assert.notEqual(policyHash(policy), policyHash(disabled));
+  for (const file of policy.editableVerificationPaths) assert.equal(needsLiveAiVerification([file]), true);
 });
 
 test('owner exception grants exactly the live UI verifier and participates in the audited policy', () => {

@@ -89,7 +89,7 @@ export async function validateCandidateTextFiles(root, files) {
   return diagnostics;
 }
 
-export function validateCandidateDiff(diff) {
+export function validateCandidateDiff(diff, policy = {}) {
   const diagnostics = [];
   let file = '(diff)', line = 0, inHunk = false;
   for (const entry of diff.split('\n')) {
@@ -118,7 +118,7 @@ export function validateCandidateDiff(diff) {
     if (!entry.startsWith('+')) { if (entry.startsWith(' ')) line++; continue; }
     const text = entry.slice(1);
     const add = (reason, guidance) => diagnostics.push(issue(file, line, reason, guidance));
-    if (/["']use server["']/.test(text)) add('New server action', 'Use the existing approved server interface; new server actions require owner approval.');
+    if (/["']use server["']/.test(text) && !(file.startsWith('src/') && policy.editableCodeScopes?.includes('application-server'))) add('New server action', 'Server actions require the owner-authorized application-server scope.');
     if (/(?:AIza[\w-]{25,}|sk-(?:ant-)?[\w-]{20,}|gh[pousr]_[\w]{20,})/.test(text)) add('Possible credential in candidate', 'Remove the credential from the candidate and use the existing approved configuration.');
     if (/test\.(?:skip|fixme)|test\.describe\.skip/.test(text)) add('Disabled browser test', 'Keep the test enabled and fix the failure.');
     if (/^(?:src|public|e2e)\//.test(file)) {
