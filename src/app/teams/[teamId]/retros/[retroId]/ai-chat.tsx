@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
+import { OwnTryConfirmation } from "./own-try-confirmation";
 import { DefaultChatTransport, generateId, type UIMessage, type UIMessageChunk } from "ai";
 
 // Lifecycle streams require finish. The existing standalone text writer emits
@@ -248,6 +249,7 @@ export function AiChat({ teamId, retroId, ownProblems = [] }: {
           {busy ? "応答中…" : "送信"}
         </button>
       </form>
+      <OwnTryConfirmation teamId={teamId} retroId={retroId} />
     </div>
   );
 }
