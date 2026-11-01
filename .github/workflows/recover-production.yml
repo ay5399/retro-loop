@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Find interrupted release and block further deployments
         id: lease
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
@@ -68,7 +68,7 @@ jobs:
         run: node scripts/automation/deployment.mjs verify-rollback
       - name: Close recovered lease
         if: steps.lease.outputs.recover == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           LEASE: ${{ steps.lease.outputs.issue }}
         with:

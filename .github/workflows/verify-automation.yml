@@ -38,7 +38,7 @@ jobs:
       TARGET_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Validate public standard-runner verification
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             if (!/^[a-f0-9]{40}$/.test(process.env.TARGET_SHA)) throw new Error('Invalid SHA');
