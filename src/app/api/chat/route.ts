@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { convertToModelMessages, streamText, stepCountIs, tool, createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
+import { convertToModelMessages, safeValidateUIMessages, streamText, stepCountIs, tool, createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let body: { messages?: UIMessage[]; retroId?: string; teamId?: string };
+  let body: unknown;
   try {
     const text = await req.text();
     if (text.length > 32_000) return new Response("送信内容が長すぎます。", { status: 413 });
@@ -28,8 +28,21 @@ export async function POST(req: Request) {
     return new Response("Bad Request", { status: 400 });
   }
 
-  const { messages, retroId, teamId } = body;
-  if (!Array.isArray(messages) || messages.length > 30 || !retroId || !teamId) {
+  const { messages, retroId, teamId } = body as Record<string, unknown>;
+  if (!Array.isArray(messages) || messages.length > 30 ||
+      typeof retroId !== "string" || !retroId || typeof teamId !== "string" || !teamId) {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const validated = await safeValidateUIMessages({ messages });
+  if (!validated.success || validated.data.some((message) => message.role === "system")) {
+    return new Response("Bad Request", { status: 400 });
+  }
+  // Validate conversion on the mock path too; malformed URLs can pass structural validation.
+  let modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>;
+  try {
+    modelMessages = await convertToModelMessages(validated.data);
+  } catch {
     return new Response("Bad Request", { status: 400 });
   }
 
@@ -99,7 +112,7 @@ export async function POST(req: Request) {
     maxRetries: 0,
     abortSignal: AbortSignal.any([req.signal, AbortSignal.timeout(30_000)]),
     system,
-    messages: await convertToModelMessages(messages),
+    messages: modelMessages,
     // ツール（読み取り専用・盤面非破壊）。引数は取らず、現在の retro を対象にする。
     tools: {
       summarizeRetro: tool({
