@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { mkdir, realpath, stat, symlink, unlink } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readdir, readFile, realpath, stat, symlink, unlink } from "node:fs/promises";
 import path from "node:path";
 import { runBrowserProbe } from "../scripts/automation/verify-live-chat-ui.mjs";
 import { actionScenario } from "../scripts/automation/live-scenario.mjs";
@@ -8,9 +8,11 @@ test("実プローブが候補リンクからモック3往復とTry保存・再�
   test.setTimeout(360_000);
   const root = await realpath(".");
   const sourceRoot = testInfo.outputPath("candidate-source");
-  const dir = path.join(root, "e2e/__screens__/own-try-probe-recovery");
+  const dir = testInfo.outputPath("own-try-probe-recovery");
+  const evidenceDir = path.join(root, "e2e/__screens__");
   await mkdir(testInfo.outputDir, { recursive: true });
   await mkdir(dir, { recursive: true });
+  await mkdir(evidenceDir, { recursive: true });
   // A junction is also a directory symlink on the hosted Linux runner.
   await symlink(root, sourceRoot, "junction");
   try {
@@ -50,7 +52,23 @@ test("実プローブが候補リンクからモック3往復とTry保存・再�
     for (const name of ["ui-before.png", "ui-after.png"]) {
       expect((await stat(path.join(dir, name))).size).toBeGreaterThan(0);
       await testInfo.attach(name, { path: path.join(dir, name), contentType: "image/png" });
+      const evidence = path.join(evidenceDir, `own-try-probe-recovery-${name}`);
+      await copyFile(path.join(dir, name), evidence);
+      const metadata = await lstat(evidence);
+      expect(metadata.isFile()).toBe(true);
+      expect(metadata.isSymbolicLink()).toBe(false);
+      expect(await readFile(evidence)).toEqual(await readFile(path.join(dir, name)));
     }
+    // Match the controller's flat PNG-only evidence contract, including the size cap.
+    let evidenceBytes = 0;
+    for (const name of await readdir(evidenceDir)) {
+      const metadata = await lstat(path.join(evidenceDir, name));
+      expect(metadata.isFile()).toBe(true);
+      expect(metadata.isSymbolicLink()).toBe(false);
+      expect(name.endsWith(".png")).toBe(true);
+      evidenceBytes += metadata.size;
+    }
+    expect(evidenceBytes).toBeLessThanOrEqual(20 * 1024 * 1024);
   } finally {
     // Remove only the directory link, never traverse or remove its checkout target.
     await unlink(sourceRoot);
