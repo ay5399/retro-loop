@@ -64,6 +64,24 @@ test("実APIで入力構造・system・変換エラーを拒否し正規の履�
   }
 });
 
+test("生の不正JSONと非オブジェクトJSONを400で拒否した後も相談できる", async ({ page }) => {
+  await loginAsDev(page, email);
+  // Buffers bypass Playwright's JSON serialization, including for malformed JSON.
+  for (const raw of ["{", "null", "[]", '"{"', "123", "true"]) {
+    const response = await page.request.post("/api/chat", {
+      data: Buffer.from(raw, "utf8"),
+      headers: { "content-type": "application/json" },
+    });
+    expect(response.status()).toBe(400);
+    expect(await response.text()).toBe("Bad Request");
+  }
+  const response = await page.request.post("/api/chat", {
+    data: { teamId, retroId, messages: [message] },
+  });
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toContain('"type":"text-delta"');
+});
+
 test("不正要求を拒否した後も本人の原文を修正再送しTryを一件保存できる", async ({ page }) => {
   await loginAsDev(page, email);
   await page.goto(`/teams/${teamId}/retros/${retroId}`);

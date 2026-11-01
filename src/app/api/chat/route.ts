@@ -23,11 +23,14 @@ export async function POST(req: Request) {
     const text = await req.text();
     if (text.length > 32_000) return new Response("送信内容が長すぎます。", { status: 413 });
     body = JSON.parse(text);
-    if (!body || typeof body !== "object") return new Response("Bad Request", { status: 400 });
   } catch {
     return new Response("Bad Request", { status: 400 });
   }
 
+  // JSON may be null, a primitive, or an array; narrow before destructuring.
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return new Response("Bad Request", { status: 400 });
+  }
   const { messages, retroId, teamId } = body as Record<string, unknown>;
   if (!Array.isArray(messages) || messages.length > 30 ||
       typeof retroId !== "string" || !retroId || typeof teamId !== "string" || !teamId) {
