@@ -48,7 +48,10 @@ test("Problemの相談文を復元し、明示送信から本人Tryの確認・�
   expect(await prisma.note.count({ where: { retrospectiveId: retroId, kind: "TRY" } })).toBe(0);
   await page.screenshot({ path: "e2e/__screens__/chat-draft-recovery-after.png", fullPage: true });
   await page.getByLabel("AIへの相談文").fill(`${draft}\n自分で依頼時刻を記録します。`);
+  const response = page.waitForResponse(response => new URL(response.url()).pathname === "/api/chat");
   await page.locator("[data-chat-send]").click();
+  expect(await (await response).finished()).toBeNull();
+  await expect(page.locator("[data-chat-wait-status]")).toHaveCount(0);
   await expect(page.locator("[data-chat-input]")).toBeEnabled();
   await expect(page.locator("[data-chat-input]")).toHaveValue("");
   await expect(page.locator("[data-chat-error]")).toHaveCount(0);
@@ -59,6 +62,7 @@ test("Problemの相談文を復元し、明示送信から本人Tryの確認・�
   await form.getByLabel("実行する日付").fill("2026-11-09");
   await form.getByRole("button", { name: "保存内容を確認" }).click();
   await expect(form).toContainText("担当：自分");
+  await expect(form).toContainText("日付：2026-11-09");
   await form.getByRole("button", { name: "Try付箋として保存", exact: true }).click();
   await expect(form.getByRole("status")).toContainText("保存しました");
   expect(await prisma.note.count({ where: { retrospectiveId: retroId, kind: "TRY", authorId: userId } })).toBe(1);
@@ -74,12 +78,16 @@ test("本人・回・チームの境界と明示破棄", async ({ page }) => {
   await page.goto(url());
   await expect(page.getByLabel("AIへの相談文")).toHaveValue(original);
   await page.getByRole("button", { name: "ログアウト" }).click();
+  await page.waitForURL(u => u.pathname === "/");
+  await expect(page.getByRole("button", { name: "ログアウト" })).toHaveCount(0);
   await loginAsDev(page, otherEmail);
   await page.goto(url());
   await expect(page.getByLabel("AIへの相談文")).toBeEnabled();
   await expect(page.getByLabel("AIへの相談文")).toHaveValue("");
   expect(await page.evaluate(k => JSON.parse(sessionStorage.getItem(k)!), key())).toBe(original);
   await page.getByRole("button", { name: "ログアウト" }).click();
+  await page.waitForURL(u => u.pathname === "/");
+  await expect(page.getByRole("button", { name: "ログアウト" })).toHaveCount(0);
   await loginAsDev(page, email);
   await page.goto(url());
   await expect(page.getByLabel("AIへの相談文")).toHaveValue(original);
@@ -142,4 +150,38 @@ test("Storage例外でも編集でき、保持不能を案内する", async ({ p
   await page.getByLabel("AIへの相談文").fill(original);
   await expect(page.getByLabel("AIへの相談文")).toHaveValue(original);
   await expect(page.getByText("相談文の保持・破棄を完了できませんでした。", { exact: false })).toBeVisible();
+});
+
+test("空白だけの復元下書きを明示破棄できる", async ({ page }) => {
+  const whitespace = "  \n\n  ";
+  await page.getByLabel("AIへの相談文").fill(whitespace);
+  await page.reload();
+  await expect(page.getByLabel("AIへの相談文")).toHaveValue(whitespace);
+  await expect(page.locator("[data-chat-send]")).toBeDisabled();
+  await page.getByRole("button", { name: "相談文の下書きを破棄" }).click();
+  expect(await page.evaluate(k => sessionStorage.getItem(k), key())).toBeNull();
+  await page.reload();
+  await expect(page.getByLabel("AIへの相談文")).toBeEnabled();
+  await expect(page.getByLabel("AIへの相談文")).toHaveValue("");
+});
+
+test("復元後に選んだ将来日を保存前に確認・修正できる", async ({ page }) => {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + 7);
+  const first = date.toISOString().slice(0, 10);
+  date.setUTCDate(date.getUTCDate() + 1);
+  const corrected = date.toISOString().slice(0, 10);
+  await page.getByLabel("AIへの相談文").fill(original);
+  await page.reload();
+  await expect(page.getByLabel("AIへの相談文")).toHaveValue(original);
+  const form = page.getByRole("region", { name: "自分のTryを確認・保存" });
+  await form.getByLabel("実行する行動").fill("レビュー依頼時刻を記録する");
+  await form.getByLabel("実行する日付").fill(first);
+  await form.getByRole("button", { name: "保存内容を確認" }).click();
+  await expect(form).toContainText(`日付：${first}`);
+  await form.getByRole("button", { name: "修正する", exact: true }).click();
+  await form.getByLabel("実行する日付").fill(corrected);
+  await form.getByRole("button", { name: "保存内容を確認" }).click();
+  await expect(form).toContainText(`日付：${corrected}`);
+  expect(await prisma.note.count({ where: { retrospectiveId: retroId, kind: "TRY" } })).toBe(0);
 });

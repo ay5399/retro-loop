@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { useChat } from "@ai-sdk/react";
 import { OwnTryConfirmation } from "./own-try-confirmation";
 import { DefaultChatTransport, generateId, type UIMessage, type UIMessageChunk } from "ai";
@@ -59,42 +59,61 @@ export function AiChat(props: AiChatProps) {
   return <ScopedAiChat key={JSON.stringify([props.userId, props.teamId, props.retroId])} {...props} />;
 }
 
-function ScopedAiChat({ teamId, retroId, userId, ownProblems = [] }: AiChatProps) {
-  const [input, setInput] = useState("");
-  const storageKey = `retroloop:chat-draft:v1:${JSON.stringify([userId, teamId, retroId])}`;
-  const [draftReady, setDraftReady] = useState(false);
-  const [restored, setRestored] = useState(false);
-  const [storageError, setStorageError] = useState(false);
-  useEffect(() => {
+function createDraftStore(storageKey: string) {
+  const initial = { input: "", draftReady: false, restored: false, storageError: false };
+  let snapshot = initial;
+  const listeners = new Set<() => void>();
+  function read() {
+    let input = "";
+    let storageError = false;
     try {
       const raw = sessionStorage.getItem(storageKey);
       if (raw !== null) {
         let value: unknown;
         try { value = JSON.parse(raw); } catch { value = null; }
         if (typeof value === "string") {
-          setInput(value);
-          setRestored(value.length > 0);
+          input = value;
         } else {
           sessionStorage.removeItem(storageKey);
         }
       }
     } catch {
-      setStorageError(true);
+      storageError = true;
     }
-    setDraftReady(true);
-  }, [storageKey]);
+    snapshot = { input, draftReady: true, restored: input.length > 0, storageError };
+  }
+  return {
+    getSnapshot: () => snapshot,
+    getServerSnapshot: () => initial,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      // Read browser storage only after hydration subscribes, never during SSR.
+      if (!snapshot.draftReady) read();
+      return () => { listeners.delete(listener); };
+    },
+    updateDraft(text: string) {
+      let storageError = false;
+      try {
+        if (text.length > 0) sessionStorage.setItem(storageKey, JSON.stringify(text));
+        else sessionStorage.removeItem(storageKey);
+      } catch {
+        storageError = true;
+      }
+      snapshot = { input: text, draftReady: true, restored: false, storageError };
+      listeners.forEach(listener => listener());
+    },
+  };
+}
 
-  // Persist only explicit input changes, never the initial empty render.
+function ScopedAiChat({ teamId, retroId, userId, ownProblems = [] }: AiChatProps) {
+  const [draftStore] = useState(() => createDraftStore(
+    `retroloop:chat-draft:v1:${JSON.stringify([userId, teamId, retroId])}`,
+  ));
+  const { input, draftReady, restored, storageError } = useSyncExternalStore(
+    draftStore.subscribe, draftStore.getSnapshot, draftStore.getServerSnapshot,
+  );
   function updateDraft(text: string) {
-    setInput(text);
-    setRestored(false);
-    try {
-      if (text.length > 0) sessionStorage.setItem(storageKey, JSON.stringify(text));
-      else sessionStorage.removeItem(storageKey);
-      setStorageError(false);
-    } catch {
-      setStorageError(true);
-    }
+    draftStore.updateDraft(text);
   }
   const [problemId, setProblemId] = useState("");
   const pending = useRef<{ id: string; text: string } | null>(null);
@@ -171,6 +190,7 @@ function ScopedAiChat({ teamId, retroId, userId, ownProblems = [] }: AiChatProps
         ) : <p className="text-sm text-muted">自分のProblemはまだありません。通常の相談も利用できます。</p>}
         <p className="text-xs text-muted">下書きは編集できます。「送信」を押すまでAIには送信されません。アクションは自動保存されません。</p>
         <p className="text-xs text-muted">未送信の相談文はこのタブ内だけで保持します。会話履歴は再読み込みで失われます。タブを閉じると下書きも失われます。</p>
+        <p className="text-xs text-muted">下書きはログアウト後もこのタブに残ります。共有端末ではログアウト前に「相談文の下書きを破棄」を押してください。破棄はすぐに実行され、元に戻せません。</p>
         {restored ? <p role="status" className="text-sm text-muted">未送信の相談文を復元しました。会話履歴は復元されません。内容を確認して送信してください。</p> : null}
         {storageError ? <p role="alert" className="text-sm text-red-700">相談文の保持・破棄を完了できませんでした。再読み込み前に原文をコピーしてください。以前の下書きが残っている場合があります。</p> : null}
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !draftReady || (!hasDraft && !storageError)}
