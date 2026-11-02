@@ -316,7 +316,7 @@ function ScopedAiChat({ teamId, retroId, userId, ownProblems = [] }: AiChatProps
           {busy ? "応答中…" : "送信"}
         </button>
       </form>
-      <OwnTryConfirmation teamId={teamId} retroId={retroId} userId={userId} />
+      <OwnTryConfirmation teamId={teamId} retroId={retroId} userId={userId} ownProblems={ownProblems} />
     </div>
   );
 }
