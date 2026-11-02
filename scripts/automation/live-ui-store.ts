@@ -11,5 +11,14 @@ export async function addNote(teamId: string, retroId: string, kind: Note['kind'
   localStorage.setItem('retro-live-fixture', JSON.stringify(notes));
   window.dispatchEvent(new Event('fixture-saved'));
 }
+export async function saveOwnTry(teamId: string, retroId: string, form: FormData) {
+  const problemId = String(form.get('problemId') ?? '');
+  const source = problemId ? getNotes().find(note => note.id === problemId && note.kind === 'PROBLEM') : null;
+  if (problemId && (!source || source.content !== form.get('problemContent'))) return { problemChanged: true };
+  const data = new FormData();
+  data.set('content', `行動：${String(form.get('action')).trim()}\n担当：自分（付箋の作成者）\n日付：${form.get('date')}${source ? `\n元Problem：${source.content}` : ''}`);
+  await addNote(teamId, retroId, 'TRY', data);
+  return { problemChanged: false };
+}
 async function unsupported() { throw new Error('This synthetic fixture only supports adding a Try note'); }
 export { unsupported as updateNote, unsupported as deleteNote, unsupported as moveNote, unsupported as setNoteColor, unsupported as toggleVote, unsupported as createGroup, unsupported as renameGroup, unsupported as ungroup };

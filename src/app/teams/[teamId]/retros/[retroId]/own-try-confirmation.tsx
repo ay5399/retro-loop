@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { addNote } from "./actions";
+import { saveOwnTry } from "./actions";
 
-export function OwnTryConfirmation({ teamId, retroId, userId }: { teamId: string; retroId: string; userId: string }) {
+type Problem = { id: string; content: string };
+export function OwnTryConfirmation({ teamId, retroId, userId, ownProblems = [] }: { teamId: string; retroId: string; userId: string; ownProblems?: Problem[] }) {
   const storageKey = `retroloop:own-try-draft:v1:${JSON.stringify([userId, teamId, retroId])}`;
-  return <OwnTryDraft key={storageKey} teamId={teamId} retroId={retroId} storageKey={storageKey} />;
+  return <OwnTryDraft key={storageKey} teamId={teamId} retroId={retroId} storageKey={storageKey} ownProblems={ownProblems} />;
 }
 
-function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId: string; storageKey: string }) {
+function OwnTryDraft({ teamId, retroId, storageKey, ownProblems }: { teamId: string; retroId: string; storageKey: string; ownProblems: Problem[] }) {
+  const [source, setSource] = useState<Problem | null>(null);
+  const [sourceError, setSourceError] = useState(false);
   const [action, setAction] = useState("");
   const [date, setDate] = useState("");
   const [ready, setReady] = useState(false);
@@ -25,6 +28,10 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
           if (typeof draft === "object" && draft !== null && "action" in draft && "date" in draft &&
               typeof draft.action === "string" && typeof draft.date === "string" &&
               (draft.date === "" || /^\d{4}-\d{2}-\d{2}$/.test(draft.date))) {
+            if ("source" in draft && typeof draft.source === "object" && draft.source !== null &&
+                "id" in draft.source && "content" in draft.source && typeof draft.source.id === "string" && typeof draft.source.content === "string") {
+              setSource({ id: draft.source.id, content: draft.source.content });
+            }
             setAction(draft.action);
             setDate(draft.date);
             setDraftNotice("未保存の下書きを復元しました。内容を確認してください。");
@@ -40,11 +47,11 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
     return () => { cancelled = true; };
   }, [storageKey]);
 
-  function persistDraft(nextAction: string, nextDate: string) {
+  function persistDraft(nextAction: string, nextDate: string, nextSource = source) {
     try {
-      if (nextAction || nextDate) sessionStorage.setItem(storageKey, JSON.stringify({ action: nextAction, date: nextDate }));
+      if (nextAction || nextDate || nextSource) sessionStorage.setItem(storageKey, JSON.stringify({ action: nextAction, date: nextDate, source: nextSource }));
       else sessionStorage.removeItem(storageKey);
-      setDraftNotice(nextAction || nextDate ? "このタブに一時保持しています。Try付箋としては未保存です。" : "");
+      setDraftNotice(nextAction || nextDate || nextSource ? "このタブに一時保持しています。Try付箋としては未保存です。" : "");
     } catch {
       setDraftNotice("このタブに下書きを保持できません。再読み込み前にTry付箋として保存してください。");
     }
@@ -55,16 +62,41 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
   const inFlight = useRef(false);
   const valid = action.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(date);
 
+  function confirm() {
+    if (!valid) return;
+    setError(false);
+    setSourceError(false);
+    const current = ownProblems.find((problem) => problem.id === source?.id);
+    if (source && !current) {
+      setSourceError(true);
+      return;
+    }
+    if (current) {
+      setSource(current);
+      persistDraft(action, date, current);
+    }
+    setStep("confirm");
+  }
+
   async function save() {
     if (!valid || step !== "confirm" || inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
     setError(false);
     const data = new FormData();
-    data.set("content", `行動：${action.trim()}\n担当：自分（付箋の作成者）\n日付：${date}`);
+    data.set("action", action);
+    data.set("date", date);
+    data.set("problemId", source?.id ?? "");
+    data.set("problemContent", source?.content ?? "");
     try {
-      await addNote(teamId, retroId, "TRY", data);
-      persistDraft("", "");
+      const result = await saveOwnTry(teamId, retroId, data);
+      if (result.problemChanged) {
+        setSourceError(true);
+        setStep("edit");
+        return;
+      }
+      setSource(null);
+      persistDraft("", "", null);
       setStep("saved");
     } catch {
       setError(true);
@@ -79,7 +111,18 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
       <h2 className="font-semibold">自分で決めた行動をTryに残す</h2>
       <p className="text-sm text-muted">相談で決めた行動と日付を自分で入力してください。担当はログイン中の本人です。AIの応答からは自動入力しません。</p>
       {step === "edit" ? (
-        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (valid) { setError(false); setStep("confirm"); } }}>
+        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); confirm(); }}>
+          <label className="block">元Problem（任意）
+            <select className="field w-full" disabled={!ready} value={source?.id ?? ""} onChange={(event) => {
+              const next = ownProblems.find((problem) => problem.id === event.target.value) ?? null;
+              setSource(next); setSourceError(false); persistDraft(action, date, next);
+            }}>
+              <option value="">元Problemを記録しない</option>
+              {source && !ownProblems.some((problem) => problem.id === source.id) ? <option value={source.id}>削除済み・選び直してください</option> : null}
+              {ownProblems.map((problem) => <option key={problem.id} value={problem.id}>{problem.content}</option>)}
+            </select>
+          </label>
+          {source ? <p className="whitespace-pre-wrap">元Problem：{source.content}</p> : null}
           <label className="block">実行する行動
             <textarea className="field w-full" required disabled={!ready} value={action} onChange={(event) => { setAction(event.target.value); persistDraft(event.target.value, date); }} />
           </label>
@@ -90,10 +133,11 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
           <button className="btn btn-ghost" type="submit" disabled={!valid}>保存内容を確認</button>
           <p className="text-sm text-muted">まだ保存されていません。</p>
           <p className="text-xs text-muted">下書きの保持はこのタブ内だけです。タブを閉じると失われます。</p>
-          <button className="btn btn-ghost" type="button" disabled={!ready || (!action && !date)} onClick={() => { setAction(""); setDate(""); setError(false); persistDraft("", ""); }}>下書きを破棄</button>
+          <button className="btn btn-ghost" type="button" disabled={!ready || (!action && !date && !source)} onClick={() => { setAction(""); setDate(""); setSource(null); setSourceError(false); setError(false); persistDraft("", "", null); }}>下書きを破棄</button>
         </form>
       ) : step === "confirm" ? (
         <div className="space-y-3">
+          <p className="whitespace-pre-wrap">元Problem：{source?.content ?? "記録しない"}</p>
           <p className="whitespace-pre-wrap">行動：{action.trim()}</p>
           <p>担当：自分（ログイン中の本人）</p>
           <p>日付：{date}</p>
@@ -106,6 +150,7 @@ function OwnTryDraft({ teamId, retroId, storageKey }: { teamId: string; retroId:
       ) : (
         <p role="status">Try付箋として保存しました。KPTのTry欄で確認できます。</p>
       )}
+      {sourceError ? <p role="alert">元Problemが変更・削除されたか、利用できません。選び直して保存内容を再確認してください。入力内容は保持しています。</p> : null}
       {saving ? <p role="status">Try付箋を保存しています。</p> : null}
       {step !== "saved" && draftNotice ? <p className="text-sm text-muted" data-own-try-draft-notice>{draftNotice}</p> : null}
       {error ? <p role="alert">保存を確認できませんでした。入力内容は保持しています。Try欄を確認してから再操作してください。</p> : null}

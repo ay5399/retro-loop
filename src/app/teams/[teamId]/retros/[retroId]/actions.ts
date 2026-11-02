@@ -44,6 +44,36 @@ export async function addNote(
   revalidateRetro(teamId, retroId);
 }
 
+// Keep the confirmed source snapshot and creation in one serializable transaction.
+export async function saveOwnTry(teamId: string, retroId: string, formData: FormData) {
+  const user = await requireUser();
+  await assertRetroAccess(teamId, retroId, user.id);
+  const action = String(formData.get("action") ?? "").replace(/\r\n?/g, "\n").trim();
+  const date = String(formData.get("date") ?? "");
+  const problemId = String(formData.get("problemId") ?? "");
+  const snapshot = String(formData.get("problemContent") ?? "").replace(/\r\n?/g, "\n");
+  if (!action || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+      new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error("入力内容を確認してください");
+  const result = await prisma.$transaction(async (tx) => {
+    let source = "";
+    if (problemId) {
+      const problem = await tx.note.findFirst({
+        where: { id: problemId, retrospectiveId: retroId, authorId: user.id, kind: "PROBLEM",
+          retrospective: { teamId, team: { memberships: { some: { userId: user.id } } } } },
+        select: { content: true },
+      });
+      if (!problem || problem.content !== snapshot) return { problemChanged: true };
+      source = `\n元Problem：${problem.content}`;
+    }
+    await tx.note.create({ data: { retrospectiveId: retroId, authorId: user.id, kind: "TRY",
+      content: `行動：${action}\n担当：自分（付箋の作成者）\n日付：${date}${source}` } });
+    return { problemChanged: false };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  revalidateRetro(teamId, retroId);
+  return result;
+}
+
 // 付箋を編集（自チームのふりかえりの付箋のみ）
 export async function updateNote(
   teamId: string,

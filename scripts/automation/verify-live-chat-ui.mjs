@@ -141,6 +141,24 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
     await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
     await page.reload();
     await expect(page.locator('[data-lane="TRY"] [data-note-id] p').filter({ hasText: saved })).toBeVisible();
-    report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, liveCalls: count };
+      // Exercise the candidate confirmation form too, with the same synthetic
+      // user's stated action/date. No additional inference or production writes.
+      const date = saved.match(/日付：(\d{4}-\d{2}-\d{2})/)?.[1];
+      const action = saved.split('／行動：')[1];
+      if (!date || !action) throw new Error('Synthetic scenario must supply its own action and date');
+      const form = page.getByRole('region', { name: '自分のTryを確認・保存' });
+      await form.getByLabel('元Problem（任意）').selectOption('problem-fixture');
+      await form.getByLabel('実行する行動').fill(action);
+      await form.getByLabel('実行する日付').fill(date);
+      await form.getByRole('button', { name: '保存内容を確認' }).click();
+      await expect(form).toContainText('元Problem：コードレビューの待ち時間が長い');
+      await form.getByRole('button', { name: 'Try付箋として保存', exact: true }).click();
+      await expect(form.getByRole('status')).toContainText('Try付箋として保存しました');
+      await page.reload();
+      const contextNote = page.locator('[data-lane="TRY"] [data-note-id]').filter({ hasText: '元Problem：コードレビューの待ち時間が長い' });
+      await expect(contextNote).toHaveCount(1);
+      await expect(contextNote).toContainText(`行動：${action}\n担当：自分（付箋の作成者）\n日付：${date}`);
+      await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
+    report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient', 'OwnTryConfirmation'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, ownTryContextReappeared: true, liveCalls: count };
   } finally { signal?.removeEventListener('abort', stop); await browser?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
