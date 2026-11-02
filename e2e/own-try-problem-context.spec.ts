@@ -16,6 +16,36 @@ const first = "レビュー待ちが長い";
 const second = "依頼の優先度が伝わらない\n急ぎか判断できない";
 const action = "自分のレビュー依頼に優先度を一件記す";
 
+test("元Problemの選択解除は従来形式の下書きに戻り、復元後も文脈を保存しない", async ({ page }) => {
+  const form = await open(page);
+  const storageKey = `retroloop:own-try-draft:v1:${JSON.stringify([userId, teamId, retroId])}`;
+  await form.getByLabel("元Problem（任意）").selectOption(secondId);
+  expect(await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!), storageKey)).toEqual({
+    action, date: "2026-11-10", source: { id: secondId, content: second },
+  });
+  await page.screenshot({ path: "e2e/__screens__/own-try-source-clear-before.png", fullPage: true });
+  await form.getByLabel("元Problem（任意）").selectOption("");
+  expect(await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!), storageKey)).toEqual({ action, date: "2026-11-10" });
+  await page.reload();
+  await expect(form.getByLabel("元Problem（任意）")).toHaveValue("");
+  await expect(form.getByLabel("実行する行動")).toHaveValue(action);
+  await expect(form.getByLabel("実行する日付")).toHaveValue("2026-11-10");
+  await form.getByLabel("実行する行動").fill(`${action}（修正）`);
+  expect(await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!), storageKey)).toEqual({ action: `${action}（修正）`, date: "2026-11-10" });
+  await form.getByRole("button", { name: "保存内容を確認" }).click();
+  await expect(form).toContainText("元Problem：記録しない");
+  await form.getByRole("button", { name: "Try付箋として保存", exact: true }).click();
+  await expect(form.getByRole("status")).toContainText("Try付箋として保存しました");
+  const saved = await prisma.note.findMany({ where: { retrospectiveId: retroId, kind: "TRY" } });
+  expect(saved).toHaveLength(1);
+  expect(saved[0].authorId).toBe(userId);
+  expect(saved[0].content).toBe(`行動：${action}（修正）\n担当：自分（付箋の作成者）\n日付：2026-11-10`);
+  expect(await page.evaluate(key => sessionStorage.getItem(key), storageKey)).toBeNull();
+  await page.reload();
+  await expect(page.locator('[data-lane="TRY"] [data-note-id]')).toContainText(saved[0].content);
+  await page.screenshot({ path: "e2e/__screens__/own-try-source-clear-after.png", fullPage: true });
+});
+
 test("元Problemだけ選んだ下書きも復元し、破棄できる", async ({ page }) => {
   await loginAsDev(page, email);
   await page.goto(`/teams/${teamId}/retros/${retroId}`);

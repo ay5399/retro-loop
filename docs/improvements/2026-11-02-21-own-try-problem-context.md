@@ -1,5 +1,19 @@
 # 本人Tryに元Problemの文脈を残す（復旧 2026-11-03-5）
 
+## 修正2：controllerで観測された下書き互換性の修復
+
+2026-11-03閲覧の提供ログnormal-recovery-after-2-checks.logでは、レビュー対象SHA 4b69804d5b1cd53d69b1cfadd70d56a74a98bee8のhostedブラウザーテストは97件成功・1件失敗。失敗はown-try-draft-recovery.spec.tsの別本人・別回への分離検査で、従来の保存値 `{ action, date }` に `source: null` が追加されていた。これは今回の任意項目追加がv1下書きの書込形式を変えた互換性退行である。認証やSDK解決の障害ではない。hydrationの警告もログにあるが、このassertion失敗の原因と混同しない。
+
+persistDraftは元Problemがある場合だけsourceを含めるよう修正した。未選択と選択解除後は従来形式を維持し、選択中のID・本文保持は継続する。既存テストの期待値を緩めず、本文・assertionを削除移動せずに独立テストを追加した。新規回帰は選択時の完全な保存値、解除後の完全な従来形式、再読込時の行動・日付保持と未選択、復元後の編集でもsourceが再混入しないこと、確認、一件保存・本人作成者・本文、下書き削除、保存再表示を検査する。候補上で撮影するPNGはown-try-source-clear-before.pngとown-try-source-clear-after.png（いずれもe2e/__screens__/配下）。旧実装の写真ではない。
+
+技術資料は2026-11-03に導入済みNextの07-mutating-data.md、aiのChatbot文書・DefaultChatTransport型、@ai-sdk/reactのuseChat型を静的再確認した。[MDN JSON.stringify](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify)はnullがJSONのnullとして残る仕様を説明しており、未選択プロパティを明示的に含めない修正の根拠となる。
+
+独立Claudeレビューは上記旧SHAをapprove、静的な必須欠陥なしと判断。ただしcontroller開始の承認であり検証合格ではない。未確認点のうち、Problem追加はtextareaで、提供ログはUI作成の複数行テスト成功を報告している。fixture・型解決を理由に保護ファイルを変更しない。
+
+提供されたnormal-recovery-live-ai-2.logでは同じ旧SHAでPlus/chatgpt、gpt-6.1-sol、最大3往復の実UI検証がpassed。本人が行動を決める問い返し、未指定項目を補完しない応答、最終確認案と未保存の表示が記録された。初回文字まで5.489/2.363/3.014秒、完了まで7.462/4.263/7.267秒。AiChat・KptBoardClient・OwnTryConfirmationから合成localStorageへの保存・再表示と元Problem再表示も成功と報告。本番Geminiとモデルが異なり、本番認証・PostgreSQL保存の成功証拠にはならない。また旧SHAの結果は今回の修正後SHAの合格証拠には転用しない。
+
+今回ホストでアプリ・ビルド・テスト・実AIを実行していない。修正後の独立レビュー、hostedモックCI、新しい正確なSHAでのcontroller限定Plus UI再検証とPNG撮影は未実施。残る制約・候補比較・週次判断は下記の一改善のまま維持する。
+
 ## 観測と復旧診断
 
 添付のai-chat / board画面では相談用Problem選択と本人Try入力が分離しており、保存する行動の元Problemは確認できない。旧実装のOwnTryConfirmation呼出しにもownProblemsが渡らない。これは静的に確認した情報欠落であり、利用者が困った頻度や改善効果は未測定。

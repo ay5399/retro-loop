@@ -49,7 +49,8 @@ function OwnTryDraft({ teamId, retroId, storageKey, ownProblems }: { teamId: str
 
   function persistDraft(nextAction: string, nextDate: string, nextSource = source) {
     try {
-      if (nextAction || nextDate || nextSource) sessionStorage.setItem(storageKey, JSON.stringify({ action: nextAction, date: nextDate, source: nextSource }));
+      // Keep the v1 draft shape compatible when no Problem is selected.
+      if (nextAction || nextDate || nextSource) sessionStorage.setItem(storageKey, JSON.stringify({ action: nextAction, date: nextDate, ...(nextSource ? { source: nextSource } : {}) }));
       else sessionStorage.removeItem(storageKey);
       setDraftNotice(nextAction || nextDate || nextSource ? "このタブに一時保持しています。Try付箋としては未保存です。" : "");
     } catch {
