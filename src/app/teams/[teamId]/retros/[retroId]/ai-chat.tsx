@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { OwnTryConfirmation } from "./own-try-confirmation";
 import { DefaultChatTransport, generateId, type UIMessage, type UIMessageChunk } from "ai";
@@ -48,13 +48,54 @@ const TOOL_LABELS: Record<string, string> = {
   flagRecurringIssues: "前回までの積み残しを確認中…",
 };
 
-export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
+type AiChatProps = {
   teamId: string;
   retroId: string;
   userId: string;
   ownProblems?: { id: string; content: string }[];
-}) {
+};
+
+export function AiChat(props: AiChatProps) {
+  return <ScopedAiChat key={JSON.stringify([props.userId, props.teamId, props.retroId])} {...props} />;
+}
+
+function ScopedAiChat({ teamId, retroId, userId, ownProblems = [] }: AiChatProps) {
   const [input, setInput] = useState("");
+  const storageKey = `retroloop:chat-draft:v1:${JSON.stringify([userId, teamId, retroId])}`;
+  const [draftReady, setDraftReady] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw !== null) {
+        let value: unknown;
+        try { value = JSON.parse(raw); } catch { value = null; }
+        if (typeof value === "string") {
+          setInput(value);
+          setRestored(value.length > 0);
+        } else {
+          sessionStorage.removeItem(storageKey);
+        }
+      }
+    } catch {
+      setStorageError(true);
+    }
+    setDraftReady(true);
+  }, [storageKey]);
+
+  // Persist only explicit input changes, never the initial empty render.
+  function updateDraft(text: string) {
+    setInput(text);
+    setRestored(false);
+    try {
+      if (text.length > 0) sessionStorage.setItem(storageKey, JSON.stringify(text));
+      else sessionStorage.removeItem(storageKey);
+      setStorageError(false);
+    } catch {
+      setStorageError(true);
+    }
+  }
   const [problemId, setProblemId] = useState("");
   const pending = useRef<{ id: string; text: string } | null>(null);
   const sending = useRef(false);
@@ -62,7 +103,7 @@ export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
   const [stopped, setStopped] = useState(false);
   function restoreDraft() {
     if (!pending.current) return;
-    setInput(pending.current.text);
+    updateDraft(pending.current.text);
     setFailedId(pending.current.id);
   }
   const { messages, sendMessage, status, stop } = useChat({
@@ -87,14 +128,14 @@ export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
 
   function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || busy || sending.current) return;
+    if (!draftReady || !trimmed || busy || sending.current) return;
     sending.current = true;
     const id = failedId ?? generateId();
     // Keep the exact draft for recovery; preserve the existing trimmed payload.
     pending.current = { id, text };
     setFailedId(null);
     setStopped(false);
-    setInput("");
+    updateDraft("");
     // Replacing the failed user turn also discards its incomplete response.
     const request = failedId
       ? sendMessage({ text: trimmed, messageId: failedId })
@@ -114,21 +155,26 @@ export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
           <>
             <label className="block text-sm" htmlFor="consultation-problem">自分のProblemから相談する</label>
             <select id="consultation-problem" className="field w-full" value={problemId}
-              onChange={(e) => setProblemId(e.target.value)} disabled={busy}>
+              onChange={(e) => setProblemId(e.target.value)} disabled={busy || !draftReady}>
               <option value="">Problemを選択</option>
               {ownProblems.map((problem) => <option key={problem.id} value={problem.id}>{problem.content}</option>)}
             </select>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !problemId}
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !draftReady || !problemId}
               onClick={() => {
                 const problem = ownProblems.find((p) => p.id === problemId);
                 if (!problem) return;
                 const draft = `自分のProblem：\n${problem.content}\n\n自分が実行するアクションを一つ考えたいです。行動・担当・日付の未確定項目は補完せず、私に質問してください。保存前に内容を確認したいです。`;
-                setInput((current) => current ? `${current}\n\n${draft}` : draft);
+                updateDraft(input ? `${input}\n\n${draft}` : draft);
                 setProblemId("");
               }}>相談文の下書きに追加</button>
           </>
         ) : <p className="text-sm text-muted">自分のProblemはまだありません。通常の相談も利用できます。</p>}
         <p className="text-xs text-muted">下書きは編集できます。「送信」を押すまでAIには送信されません。アクションは自動保存されません。</p>
+        <p className="text-xs text-muted">未送信の相談文はこのタブ内だけで保持します。会話履歴は再読み込みで失われます。タブを閉じると下書きも失われます。</p>
+        {restored ? <p role="status" className="text-sm text-muted">未送信の相談文を復元しました。会話履歴は復元されません。内容を確認して送信してください。</p> : null}
+        {storageError ? <p role="alert" className="text-sm text-red-700">相談文の保持・破棄を完了できませんでした。再読み込み前に原文をコピーしてください。以前の下書きが残っている場合があります。</p> : null}
+        <button type="button" className="btn btn-ghost btn-sm" disabled={busy || !draftReady || (!hasDraft && !storageError)}
+          onClick={() => updateDraft("")}>相談文の下書きを破棄</button>
       </div>
       <div className="flex flex-col gap-3">
         {messages.length === 0 ? (
@@ -143,7 +189,7 @@ export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
                   type="button"
                   className="btn btn-ghost btn-sm"
                   onClick={() => submitSuggestion(s)}
-                  disabled={busy || hasDraft}
+                  disabled={busy || !draftReady || hasDraft}
                   aria-describedby={hasDraft ? "consultation-draft-guard" : undefined}
                 >
                   {s}
@@ -237,14 +283,14 @@ export function AiChat({ teamId, retroId, userId, ownProblems = [] }: {
           aria-label="AIへの相談文"
           placeholder="AIアシスタントに相談…"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={busy}
+          onChange={(e) => updateDraft(e.target.value)}
+          disabled={busy || !draftReady}
           data-chat-input
         />
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={busy || input.trim().length === 0}
+          disabled={busy || !draftReady || input.trim().length === 0}
           data-chat-send
         >
           {busy ? "応答中…" : "送信"}
