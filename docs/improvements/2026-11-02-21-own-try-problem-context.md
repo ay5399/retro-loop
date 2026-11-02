@@ -37,7 +37,20 @@
 
 ## レビューと未完了範囲
 
-独立Claude実装レビューは今回未実施。指摘と対応はcontrollerの正確な対象SHAのレビュー後に追記が必要。架空DB・モックAIのhosted CIも未実施。失敗があればSHA・日時・原因を記録し、再現した原因だけ修正する。
+独立Claudeレビュー（対象SHA: 69eb3f606d125239a3c63706aa0d4ac51ef12c8e）はrevise。2026-11-03の修正1では次の全指摘を静的に照合した。この修正後の正確なSHAの再レビュー、架空DB・モックAIのhosted CIは未実施。
+
+- 必須1・改行比較の非対称：送信snapshotだけLF化していたため、既存DBのCRLF/CR本文では内容が同じでもproblemChangedとなる。saveOwnTry内の同じ関数でsnapshot・DB比較値・保存する元ProblemをLFへ正規化した。空白の除去などで実際の本文変更を隠さない。既存データの移行は不要。
+- 必須2・入力検証：addNote全文を確認。認証・回のチーム認可後、改行正規化とtrim、空本文の拒否のみで、本文長の上限はない。saveOwnTryは同じ認証・認可、行動の正規化・trim・空入力拒否を維持し、日付の形式と実在日も検証する。引き継ぐ長さ上限が存在しないため、上限追加や上限超過テストは行わない。
+- 未提示文脈：actions.tsはPrismaを値importしている。page.tsxは本人authorIdかつPROBLEMでownProblemsを絞る。live-ui-store.tsのproblem-fixture本文はverifierの期待値と一致。actionScenario().savedは「日付：YYYY-MM-DD」と「／行動：」を含み、verifierの抽出形式と一致する。playwright.config.tsはfullyParallel: false、workers: 1で、このファイル内の同名チーム競合を避けている。型解決の実行確認はcontrollerに残る。
+
+再発防止として既存E2E本文を変更せず独立テストを末尾に追加した。CRLFと単独CRの既存Problemそれぞれで確認・保存一件・作成者・LF本文・再読込後の再表示を検査する。さらに画面のProblem追加フォームで複数行本文を作成し、本人Tryの選択・確認・保存・DB照合・再表示を通す。UI経由の追加は現行addNoteがLF化する経路、DBに直接CRLF/CRを入れるテストは過去データの経路を担う。本文変更・削除の既存拒否テストも維持する。
+
+新規UI回帰テストが候補上で作成する予定の証拠（未撮影）：
+
+- e2e/__screens__/own-try-problem-newlines-before.png
+- e2e/__screens__/own-try-problem-newlines-after.png
+
+技術根拠は導入済みNextのMutating Data、aiのChatbot資料と@ai-sdk/reactのuseChat型を再読した。2026-11-03に[Next公式Server Actions](https://nextjs.org/docs/app/guides/server-actions)の更新UIを含む応答と再検証の説明、および[MDN replace](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace)の正規表現置換仕様も参照。これらは静的な実装修正の根拠であり実行成功の証拠ではない。今回もホストでアプリ・ビルド・テスト・実AIは実行していない。git diff --checkのみ実施。保護対象・fixture・依存・DBスキーマ・認証・費用境界の追加変更はない。
 
 レビュー後SHAのPlus限定実AI検証（最大3往復）も未実施。接続確認、応答内容・遅延・モデル差、確認フォームから合成保存・再表示までを区別して記録する必要がある。本番認証・PostgreSQLの検証はモックCIが担う。追加購入や従量APIへ切り替えない。
 

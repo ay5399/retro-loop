@@ -154,3 +154,44 @@ test("未選択保存は従来の本文を維持する", async ({ page }) => {
   expect(saved).toHaveLength(1);
   expect(saved[0].content).toBe(`行動：${action}\n担当：自分（付箋の作成者）\n日付：2026-11-10`);
 });
+
+for (const newline of ["\r\n", "\r"] as const) {
+  test(`既存Problemの${JSON.stringify(newline)}改行を同じ本文として確認・保存する`, async ({ page }) => {
+    await prisma.note.update({ where: { id: secondId }, data: { content: second.replaceAll("\n", newline) } });
+    const form = await open(page);
+    await form.getByLabel("元Problem（任意）").selectOption(secondId);
+    await form.getByRole("button", { name: "保存内容を確認" }).click();
+    await expect(form).toContainText(`元Problem：${second}`);
+    await form.getByRole("button", { name: "Try付箋として保存", exact: true }).click();
+    await expect(form.getByRole("status")).toContainText("Try付箋として保存しました");
+    const saved = await prisma.note.findMany({ where: { retrospectiveId: retroId, kind: "TRY" } });
+    expect(saved).toHaveLength(1);
+    expect(saved[0].authorId).toBe(userId);
+    expect(saved[0].content).toBe(`行動：${action}\n担当：自分（付箋の作成者）\n日付：2026-11-10\n元Problem：${second}`);
+    await page.reload();
+    await expect(page.locator('[data-lane="TRY"] [data-note-id]')).toContainText(saved[0].content);
+  });
+}
+
+test("画面で作成した複数行Problemから確認・保存・再表示できる", async ({ page }) => {
+  const form = await open(page);
+  const content = "UIで作ったレビュー課題\n依頼の期限が伝わらない";
+  const lane = page.locator('[data-lane="PROBLEM"]');
+  await lane.getByPlaceholder("Problem を追加").fill(content);
+  await lane.getByRole("button", { name: "＋ 追加", exact: true }).click();
+  await expect(lane.locator('[data-note-id]').filter({ hasText: content })).toHaveCount(1);
+  const problem = await prisma.note.findFirstOrThrow({ where: { retrospectiveId: retroId, authorId: userId, content } });
+  await form.getByLabel("元Problem（任意）").selectOption(problem.id);
+  await page.screenshot({ path: "e2e/__screens__/own-try-problem-newlines-before.png", fullPage: true });
+  await form.getByRole("button", { name: "保存内容を確認" }).click();
+  await expect(form).toContainText(`元Problem：${content}`);
+  await form.getByRole("button", { name: "Try付箋として保存", exact: true }).click();
+  await expect(form.getByRole("status")).toContainText("Try付箋として保存しました");
+  const saved = await prisma.note.findMany({ where: { retrospectiveId: retroId, kind: "TRY" } });
+  expect(saved).toHaveLength(1);
+  expect(saved[0].authorId).toBe(userId);
+  expect(saved[0].content).toBe(`行動：${action}\n担当：自分（付箋の作成者）\n日付：2026-11-10\n元Problem：${content}`);
+  await page.reload();
+  await expect(page.locator('[data-lane="TRY"] [data-note-id]')).toContainText(saved[0].content);
+  await page.screenshot({ path: "e2e/__screens__/own-try-problem-newlines-after.png", fullPage: true });
+});
