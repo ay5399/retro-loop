@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { buildRetroSummary, buildRecurringIssues } from "@/lib/llm/retro-tools";
 import { allowRequest, externalServiceEnabled, isMockLlm } from "@/lib/service-policy";
 import { ACTION_GUIDANCE } from "@/lib/llm/chat-guidance";
-import { buildChatNoteContext } from "@/lib/llm/chat-note-context";
+import { buildChatNoteContext } from "../../../lib/llm/chat-note-context";
 
 // ふりかえり画面のAIチャットアシスタント（ストリーミング）。
 // Vercel AI SDK（ai@7 / @ai-sdk/react の useChat）と接続する Route Handler。
