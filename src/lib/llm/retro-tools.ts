@@ -5,6 +5,12 @@ import { prisma } from "../prisma";
 
 type NoteLite = { kind: string; content: string };
 
+type ChatToolNote = { kind: string; content: string; votes: number; author: string };
+function chatToolNote(note: NoteLite & { authorId: string; votes: unknown[] }, userId: string): ChatToolNote {
+  return { kind: note.kind, content: note.content, votes: note.votes.length,
+    author: note.authorId === userId ? "ログイン本人" : "他メンバー" };
+}
+
 // TRY / PROBLEM を content 配列に分解する
 function splitTryProblem(notes: NoteLite[]): {
   tries: string[];
@@ -26,9 +32,17 @@ export type RetroSummary = {
   groups: { kind: string; name: string | null }[];
 };
 
+type ChatRetroSummary = Omit<RetroSummary, "keep" | "problem" | "try"> & {
+  keep: ChatToolNote[]; problem: ChatToolNote[]; try: ChatToolNote[];
+};
+
+export function buildRetroSummary(retroId: string): Promise<RetroSummary | null>;
+export function buildRetroSummary(retroId: string, currentUserId: string): Promise<ChatRetroSummary | null>;
+
 // E: 今回のふりかえりの総括材料（付箋を投票数つき・グループつきで構造化）。
 export async function buildRetroSummary(
   retroId: string,
+  currentUserId?: string,
 ): Promise<RetroSummary | null> {
   const retro = await prisma.retrospective.findUnique({
     where: { id: retroId },
@@ -42,7 +56,9 @@ export async function buildRetroSummary(
   const byKind = (kind: string) =>
     retro.notes
       .filter((n) => n.kind === kind)
-      .map((n) => ({ content: n.content, votes: n.votes.length }))
+      .map((n) => currentUserId === undefined
+        ? { content: n.content, votes: n.votes.length }
+        : chatToolNote(n, currentUserId))
       .sort((a, b) => b.votes - a.votes);
 
   const keep = byKind("KEEP");
@@ -66,30 +82,52 @@ export type RecurringIssues = {
   current: { tries: string[]; problems: string[] };
 };
 
+type ChatRecurringIssues = {
+  hasHistory: boolean;
+  previous: { retroName: string; tries: ChatToolNote[]; problems: ChatToolNote[] }[];
+  current: { tries: ChatToolNote[]; problems: ChatToolNote[] };
+};
+
+export function buildRecurringIssues(retroId: string, depth?: number): Promise<RecurringIssues>;
+export function buildRecurringIssues(retroId: string, depth: number, currentUserId: string): Promise<ChatRecurringIssues>;
+
 // F: 直近スプリント横断の指摘材料。previousRetrospectiveId チェーンを depth 件遡り、
 // 過去の Try / Problem を集めて「未定着の Try」「再発している Problem」を LLM に判断させる。
 export async function buildRecurringIssues(
   retroId: string,
   depth = 3,
-): Promise<RecurringIssues> {
+  currentUserId?: string,
+): Promise<{
+  hasHistory: boolean;
+  previous: { retroName: string; tries: (string | ChatToolNote)[]; problems: (string | ChatToolNote)[] }[];
+  current: { tries: (string | ChatToolNote)[]; problems: (string | ChatToolNote)[] };
+}> {
+  // Only the authenticated Route supplies this ID; note text cannot set authorship.
+  const split = (notes: (NoteLite & { authorId: string; votes: unknown[] })[]) => {
+    if (currentUserId === undefined) return splitTryProblem(notes);
+    return {
+      tries: notes.filter((n) => n.kind === "TRY").map((n) => chatToolNote(n, currentUserId)),
+      problems: notes.filter((n) => n.kind === "PROBLEM").map((n) => chatToolNote(n, currentUserId)),
+    };
+  };
   const current = await prisma.retrospective.findUnique({
     where: { id: retroId },
-    include: { notes: true },
+    include: { notes: { include: { votes: true } } },
   });
   if (!current) {
     return { hasHistory: false, previous: [], current: { tries: [], problems: [] } };
   }
 
-  const previous: RecurringIssues["previous"] = [];
+  const previous: { retroName: string; tries: (string | ChatToolNote)[]; problems: (string | ChatToolNote)[] }[] = [];
   let prevId = current.previousRetrospectiveId;
   let guard = 0;
   while (prevId && guard < depth) {
     const r = await prisma.retrospective.findUnique({
       where: { id: prevId },
-      include: { notes: true },
+      include: { notes: { include: { votes: true } } },
     });
     if (!r) break;
-    const tp = splitTryProblem(r.notes);
+    const tp = split(r.notes);
     previous.push({ retroName: r.name, tries: tp.tries, problems: tp.problems });
     prevId = r.previousRetrospectiveId;
     guard++;
@@ -98,6 +136,6 @@ export async function buildRecurringIssues(
   return {
     hasHistory: previous.length > 0,
     previous,
-    current: splitTryProblem(current.notes),
+    current: split(current.notes),
   };
 }
