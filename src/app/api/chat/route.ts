@@ -18,6 +18,7 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
+  const currentUserId = session.user.id;
 
   let body: unknown;
   try {
@@ -120,13 +121,13 @@ export async function POST(req: Request) {
         description:
           "今回のふりかえりの付箋を投票数つき・グループつきで取得し、総括の材料にする。",
         inputSchema: z.object({}),
-        execute: async () => (await buildRetroSummary(retro.id)) ?? { note: "付箋がありません" },
+        execute: async () => (await buildRetroSummary(retro.id, currentUserId)) ?? { note: "付箋がありません" },
       }),
       flagRecurringIssues: tool({
         description:
           "前回までのふりかえり（最大3件遡る）の Try / Problem を取得し、未定着の Try や再発している Problem を横断で指摘する材料にする。",
         inputSchema: z.object({}),
-        execute: async () => buildRecurringIssues(retro.id),
+        execute: async () => buildRecurringIssues(retro.id, 3, currentUserId),
       }),
     },
     // ツール呼び出し→結果を踏まえた応答、の複数ステップを許可（無料枠保護に上限は低め）
