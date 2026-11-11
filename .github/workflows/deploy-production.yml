@@ -41,7 +41,7 @@ jobs:
       HEALTHCHECK_TOKEN: ${{ secrets.AUTOMATION_HEALTHCHECK_TOKEN }}
     steps:
       - name: Validate release and wait for exact-SHA CI
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             if (process.env.AUTOMATION_HALTED === 'true') throw new Error('Production halt is active');
@@ -108,7 +108,7 @@ jobs:
         run: npx vercel@64.2.0 build --prod
       - name: Record release recovery lease
         id: lease
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PREVIOUS: ${{ steps.previous.outputs.previous }}
           PREVIOUS_SHA: ${{ steps.previous.outputs.previous_sha }}
@@ -135,7 +135,7 @@ jobs:
             exit 1
           fi
       - name: Close verified release lease
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           LEASE: ${{ steps.lease.outputs.issue }}
         with:
@@ -158,7 +158,7 @@ jobs:
         run: node scripts/automation/deployment.mjs verify-rollback
       - name: Record release incident
         if: ${{ always() && steps.deploy.outcome != 'skipped' && steps.deploy.outcome != '' && (steps.deploy.outcome != 'success' || steps.verify.outcome != 'success') }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ROLLBACK_OUTCOME: ${{ steps.rollback.outcome }}
         with:
