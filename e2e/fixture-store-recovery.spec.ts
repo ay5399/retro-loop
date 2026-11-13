@@ -84,3 +84,67 @@ function getNotes() {
     await testInfo.attach(`fixture-store-recovery-${phase}`, { path: screenshot, contentType: "image/png" });
   }
 });
+
+test("候補storeの保存監査が食い違う場合は固有エラーでprobeを拒否して成功報告しない", async ({}, testInfo) => {
+  test.setTimeout(360_000);
+  const root = await realpath(".");
+  const sourceRoot = testInfo.outputPath("mismatched-candidate-checkout");
+  const dir = testInfo.outputPath("mismatched-probe");
+  await mkdir(path.join(sourceRoot, "scripts/automation"), { recursive: true });
+  await mkdir(dir, { recursive: true });
+  await cp(path.join(root, "src"), path.join(sourceRoot, "src"), { recursive: true });
+  for (const name of ["live-ui-entry.tsx", "live-ui-store.ts"]) {
+    await copyFile(path.join(root, "scripts/automation", name), path.join(sourceRoot, "scripts/automation", name));
+  }
+  expect(await realpath(sourceRoot)).not.toBe(root);
+  const scenario = actionScenario();
+  const auditKey = "fixture-store-recovery-mismatch";
+  const failure = "Candidate store audit action differs from the saved own Try";
+  const storePath = path.join(sourceRoot, "scripts/automation/live-ui-store.ts");
+  const store = await readFile(storePath, "utf8");
+  const save = "await addNote(teamId, retroId, 'TRY', data);";
+  expect(store.split(save)).toHaveLength(2);
+  // Corrupt only the audit in this disposable candidate. Keep the real save,
+  // returned status, note content and fixture-saved event intact.
+  await writeFile(storePath, store.replace(save, `localStorage.setItem(${JSON.stringify(auditKey)}, JSON.stringify({ action: '別の保存経路の行動' }));\n  ${save}`), "utf8");
+  const entryPath = path.join(sourceRoot, "scripts/automation/live-ui-entry.tsx");
+  const entry = await readFile(entryPath, "utf8");
+  const importLine = "import { getNotes } from './live-ui-store';";
+  expect(entry.split(importLine)).toHaveLength(2);
+  await writeFile(entryPath, entry.replace(importLine, `import { getNotes as readNotes } from './live-ui-store';
+function getNotes() {
+  const notes = readNotes();
+  const confirmed = notes.find(note => note.content.includes('元Problem：'));
+  if (confirmed) {
+    const audit = JSON.parse(localStorage.getItem(${JSON.stringify(auditKey)}) ?? 'null');
+    if (audit?.action !== ${JSON.stringify(scenario.saved.split("／行動：")[1])}) {
+      throw new Error(${JSON.stringify(failure)});
+    }
+  }
+  return notes;
+}`), "utf8");
+  const replies = [
+    "レビュー待ちのどの場面で困っていますか。自分で変えられることを教えてください。",
+    "担当者や期限はまだ未定ですね。自分で実行する行動と具体的な日付を教えてください。",
+    `保存前の確認案です。${scenario.saved}。未保存です。確認して自分でTry付箋に追加してください。`,
+  ];
+  const report: { transcripts: { input: string; text: string }[]; browser?: { status: string }; inferenceFailed?: boolean } = { transcripts: [] };
+  let calls = 0;
+  await expect(runBrowserProbe({
+    sourceRoot, dir, report, inputs: scenario.inputs, saved: scenario.saved,
+    signal: AbortSignal.timeout(330_000), expiresAt: Date.now() + 330_000,
+    complete: async (input: string, delta: (text: string) => void) => {
+      expect(calls).toBeLessThan(3);
+      expect(input).toBe(scenario.inputs[calls]);
+      const text = replies[calls++];
+      await new Promise(resolve => setTimeout(resolve, 150));
+      delta(text.slice(0, 12));
+      delta(text.slice(12));
+      return { text };
+    },
+  })).rejects.toThrow(`Synthetic browser fixture failed: ${failure}`);
+  expect(calls).toBe(3);
+  expect(report.transcripts).toEqual(scenario.inputs.map((input: string, i: number) => ({ input, text: replies[i] })));
+  expect(report.inferenceFailed).toBeUndefined();
+  expect(report.browser).toBeUndefined();
+});
