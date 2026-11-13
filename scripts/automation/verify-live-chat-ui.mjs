@@ -118,6 +118,16 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
     signal?.throwIfAborted();
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } });
+    const browserErrors = [];
+    const browserFailure = new Promise((_, reject) => {
+      page.on('pageerror', error => {
+        browserErrors.push(error);
+        reject(new Error(`Synthetic browser fixture failed: ${error.message}`));
+      });
+    });
+    // Handle early failures immediately; race the save status below so a fixture
+    // audit error cannot be mistaken for a successful save or a generic timeout.
+    browserFailure.catch(() => {});
     await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
     await page.goto(origin);
     await expect(page.locator('[data-chat-input]')).toBeVisible();
@@ -153,12 +163,17 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
       await form.getByRole('button', { name: '保存内容を確認' }).click();
       await expect(form).toContainText('元Problem：コードレビューの待ち時間が長い');
       await form.getByRole('button', { name: 'Try付箋として保存', exact: true }).click();
+      await Promise.race([
+        browserFailure,
+        expect(form.getByRole('status')).toContainText('Try付箋として保存しました'),
+      ]);
       await expect(form.getByRole('status')).toContainText('Try付箋として保存しました');
       await page.reload();
       const contextNote = page.locator('[data-lane="TRY"] [data-note-id]').filter({ hasText: '元Problem：コードレビューの待ち時間が長い' });
       await expect(contextNote).toHaveCount(1);
       await expect(contextNote).toContainText(`行動：${action}\n担当：自分（付箋の作成者）\n日付：${date}`);
       await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
+    if (browserErrors.length) throw new Error(`Synthetic browser fixture failed: ${browserErrors[0].message}`);
     report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient', 'OwnTryConfirmation'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, ownTryContextReappeared: true, liveCalls: count };
   } finally { signal?.removeEventListener('abort', stop); await browser?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
