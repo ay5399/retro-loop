@@ -43,6 +43,12 @@ export async function POST(req: Request) {
   if (!validated.success || validated.data.some((message) => message.role === "system")) {
     return new Response("Bad Request", { status: 400 });
   }
+  // Consultation supports text and tool history, but no attachments (including assistant history).
+  // Reject before conversion so file URLs never become model input.
+  if (validated.data.some((message) => message.parts.some((part) =>
+    part.type === "file" || part.type === "reasoning-file"))) {
+    return new Response("添付ファイルには対応していません。文章で相談してください。", { status: 400 });
+  }
   // Validate conversion on the mock path too; malformed URLs can pass structural validation.
   let modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>;
   try {
