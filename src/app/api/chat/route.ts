@@ -107,7 +107,7 @@ export async function POST(req: Request) {
     "",
     "ツールを使えます（必ず日本語で自然に結果を要約して返すこと）:",
     "- summarizeRetro: 「今回の総括」「まとめて」等を求められたら使う。投票数の多い付箋を重視して要約する。",
-    "- flagRecurringIssues: 「横断」「前回からの積み残し」「放置されてないか」「再発」等を問われたら使う。前回までの Try が今回も未定着でないか、同じ Problem が繰り返されていないかを指摘する。",
+    "- flagRecurringIssues: 「横断」「前回からの積み残し」「放置されてないか」「再発」等を問われたら使う。過去と今回のTry / Problemを比較する。実施状況は取得できないため、未実施・未定着・失敗を断定せず、状況不明なら本人に一つ質問して確認する。",
   ].join("\n");
   if (system.length > 32_000) return new Response("付箋の内容が長すぎます。", { status: 413 });
 
@@ -131,7 +131,7 @@ export async function POST(req: Request) {
       }),
       flagRecurringIssues: tool({
         description:
-          "前回までのふりかえり（最大3件遡る）の Try / Problem を取得し、未定着の Try や再発している Problem を横断で指摘する材料にする。",
+          "前回までのふりかえり（最大3件遡る）の Try / Problem を比較材料として取得する。実施状況は含まれない。過去Tryや類似Problemだけで未実施・未定着・失敗を断定せず、状況不明なら本人に一つ質問して確認し、回答後は本人の次の行動一つの具体化に戻る。",
         inputSchema: z.object({}),
         execute: async () => buildRecurringIssues(retro.id, 3, currentUserId),
       }),
