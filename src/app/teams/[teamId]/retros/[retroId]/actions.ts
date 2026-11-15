@@ -59,7 +59,7 @@ export async function saveOwnTry(teamId: string, retroId: string, formData: Form
   if (!action || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
       !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
       new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error("入力内容を確認してください");
-  const result = await prisma.$transaction(async (tx) => {
+  const save = () => prisma.$transaction(async (tx) => {
     let source = "";
     if (problemId) {
       const problem = await tx.note.findFirst({
@@ -74,8 +74,19 @@ export async function saveOwnTry(teamId: string, retroId: string, formData: Form
       content: `行動：${action}\n担当：自分（付箋の作成者）\n日付：${date}${source}` } });
     return { problemChanged: false };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  revalidateRetro(teamId, retroId);
-  return result;
+  for (let attempt = 1; ; attempt++) {
+    let result;
+    try {
+      result = await save();
+    } catch (error) {
+      // P2034 guarantees an aborted transaction; retry the source check too.
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== "P2034" || attempt >= 3) throw error;
+      continue;
+    }
+    revalidateRetro(teamId, retroId);
+    return result;
+  }
 }
 
 // 付箋を編集（自チームのふりかえりの付箋のみ）
