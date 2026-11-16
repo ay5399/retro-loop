@@ -125,7 +125,7 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
         reject(new Error(`Synthetic browser fixture failed: ${error.message}`));
       });
     });
-    // Handle early failures immediately; race the save status below so a fixture
+    // Handle early failures immediately; race save and reload checks so a fixture
     // audit error cannot be mistaken for a successful save or a generic timeout.
     browserFailure.catch(() => {});
     await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
@@ -152,8 +152,10 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
     await lane.getByRole('button', { name: '＋ 追加', exact: true }).click();
     await expect(lane.locator('[data-note-id] p').filter({ hasText: saved })).toBeVisible();
     await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
-    await page.reload();
-    await expect(page.locator('[data-lane="TRY"] [data-note-id] p').filter({ hasText: saved })).toBeVisible();
+    await Promise.race([browserFailure, (async () => {
+      await page.reload();
+      await expect(page.locator('[data-lane="TRY"] [data-note-id] p').filter({ hasText: saved })).toBeVisible();
+    })()]);
       // Exercise the candidate confirmation form too, with the same synthetic
       // user's stated action/date. No additional inference or production writes.
       const date = saved.match(/日付：(\d{4}-\d{2}-\d{2})/)?.[1];
@@ -171,10 +173,12 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
         expect(form.getByRole('status')).toContainText('Try付箋として保存しました'),
       ]);
       await expect(form.getByRole('status')).toContainText('Try付箋として保存しました');
+      await Promise.race([browserFailure, (async () => {
       await page.reload();
       const contextNote = page.locator('[data-lane="TRY"] [data-note-id]').filter({ hasText: '元Problem：コードレビューの待ち時間が長い' });
       await expect(contextNote).toHaveCount(1);
       await expect(contextNote).toContainText(`行動：${action}\n担当：自分（付箋の作成者）\n日付：${date}`);
+      })()]);
       await page.screenshot({ path: path.join(dir, 'ui-after.png'), fullPage: true });
     if (browserErrors.length) throw new Error(`Synthetic browser fixture failed: ${browserErrors[0].message}`);
     report.browser = { status: 'passed', realComponents: ['AiChat', 'KptBoardClient', 'OwnTryConfirmation'], persistence: 'synthetic localStorage fixture; real PostgreSQL server actions remain covered separately by CI', savedNoteReappeared: true, ownTryContextReappeared: true, liveCalls: count };
