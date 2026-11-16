@@ -143,6 +143,9 @@ export async function runBrowserProbe({ complete, dir, report, inputs, saved, so
       expect((await replies.last().innerText()).trim().length).toBeGreaterThan(10);
     }
     expect(report.transcripts[0].text).not.toMatch(/15時|当番/);
+    // Bounded evidence for the ambiguous declaration; human review still evaluates meaning.
+    expect(report.transcripts[1].text).toMatch(/[？?]|教えて|聞かせて/);
+    expect(report.transcripts[1].text).not.toMatch(/15時|当番/);
     assertConfirmationReply(report.transcripts[2].text);
     const lane = page.locator('[data-lane="TRY"]');
     await lane.getByPlaceholder('Try を追加').fill(saved);
